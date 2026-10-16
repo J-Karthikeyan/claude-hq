@@ -22,6 +22,26 @@ public struct Creature: Equatable, Sendable {
         self.shiny = shiny
     }
 
+    /// HQ's evolution floor: a species never shows an earlier form than the highest stage
+    /// any of your sessions reached with it (HQ's `/api/pokedex` `maxStage`, which the
+    /// browser also floors live cards to). `floor` maps species index -> stage.
+    public func floored(_ floor: [Int: Int]) -> Creature {
+        Creature(species: species, stage: max(stage, floor[species] ?? 0), shiny: shiny)
+    }
+
+    /// Parse HQ's `/api/pokedex` into species -> maxStage.
+    public static func parseFloor(_ data: Data) -> [Int: Int] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let list = root["species"] as? [[String: Any]] else { return [:] }
+        var out: [Int: Int] = [:]
+        for o in list {
+            if let sp = o["species"] as? Int, let m = o["maxStage"] as? Int, m > 0 {
+                out[((sp % 48) + 48) % 48] = max(0, min(4, m))
+            }
+        }
+        return out
+    }
+
     /// HQ's evolution thresholds on promptCount (dashboard.py STAGE_THRESHOLDS).
     public static let stageThresholds = [0, 3, 12, 30, 70]
 

@@ -83,7 +83,33 @@ final class AppModel: ObservableObject {
     }
 
     func creature(_ s: Session) -> Creature {
-        s.creature ?? Creature.local(sessionId: s.id, prompts: s.promptCount, salt: salt)
+        (s.creature ?? Creature.local(sessionId: s.id, prompts: s.promptCount, salt: salt)).floored(stageFloor)
+    }
+
+    /// Species -> highest stage reached (HQ's Pokédex). Kept in UserDefaults so the floor
+    /// still applies when HQ is not running.
+    @Published private(set) var stageFloor: [Int: Int] = {
+        let raw = UserDefaults.standard.dictionary(forKey: "hqnotch.stageFloor") as? [String: Int] ?? [:]
+        return Dictionary(uniqueKeysWithValues: raw.compactMap { k, v in Int(k).map { ($0, v) } })
+    }()
+    private var floorFetchedAt: Date?
+
+    private func pollFloor(_ base: URL) async {
+        if let t = floorFetchedAt, Date().timeIntervalSince(t) < 60 { return }   // Pokédex scans every transcript
+        var req = URLRequest(url: base.appendingPathComponent("api/pokedex"), timeoutInterval: 10)
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else { return }
+        floorFetchedAt = Date()
+        let fresh = Creature.parseFloor(data)
+        guard !fresh.isEmpty else { return }
+        // Never lower a floor (HQ's browser floor is monotonic too).
+        let merged = stageFloor.merging(fresh) { max($0, $1) }
+        if merged != stageFloor {
+            stageFloor = merged
+            UserDefaults.standard.set(Dictionary(uniqueKeysWithValues: merged.map { (String($0.key), $0.value) }),
+                                      forKey: "hqnotch.stageFloor")
+        }
     }
 
     // MARK: hook events
@@ -175,6 +201,7 @@ final class AppModel: ObservableObject {
               (resp as? HTTPURLResponse)?.statusCode == 200 else { hqReachable = false; return }
         hqReachable = true
         store.mergeHQ(HQSession.parse(data))
+        await pollFloor(base)
     }
 
     /// HQ's per-install shiny salt (`.dex-seed` next to dashboard.py), so local fallback

@@ -30,6 +30,18 @@ let urls = Creature(species: 0, stage: 4, shiny: true).spriteURLs(sessionId: "s"
 expect(urls.first?.absoluteString.hasSuffix("/animated/shiny/26.gif") == true, "shiny animated URL")
 expect(urls.count == 2, "animated + static fallback")
 
+// evolution floor (HQ's Pokédex maxStage)
+let floorJSON = #"{"species":[{"species":38,"maxStage":4},{"species":0,"maxStage":0},{"species":-1,"maxStage":9},{"species":"x"}]}"#
+let floor = Creature.parseFloor(Data(floorJSON.utf8))
+expect(floor[38] == 4 && floor[0] == nil, "floor keeps only maxStage > 0")
+expect(floor[38] == 4 && floor.count == 2 && floor[47] == 4, "negative species wrapped, stage clamped")
+let electrike = Creature(species: 38, stage: 0, shiny: false)
+expect(electrike.dex(sessionId: "s") == 309, "raw stage 0 = Electrike")
+expect(electrike.floored(floor).dex(sessionId: "s") == 310, "floored to stage 4 = Manectric")
+expect(electrike.floored(floor).name(sessionId: "s") == "Manectric", "floored name")
+expect(Creature(species: 38, stage: 4, shiny: false).floored([38: 1]).stage == 4, "floor never lowers")
+expect(electrike.floored([:]) == electrike, "no floor = unchanged")
+
 // MARK: store lifecycle
 
 var st = SessionStore()
