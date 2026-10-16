@@ -262,6 +262,21 @@ function mount(el, api){
     M.wheels[0].rotation.x += d/MOTO_WR; M.wheels[1].rotation.x += d/MOTO_WR;
     if(st != null) M.steer.rotation.y = st*0.4;
   }
+  // A skateboard: deck, trucks and four wheels; forward is +z (the nose). {g, deck, wheels}.
+  function boardModel(color){
+    var g = new THREE.Group(), deck = new THREE.Group(); g.add(deck);
+    var top = mat(0x1d2126, {roughness: 0.95}), ply = mat(color, {roughness: 0.6}), steel = mat(0xc4ccd4, {metalness: 0.85, roughness: 0.3});
+    var wheelM = mat(0xf2efe6, {roughness: 0.5});
+    box(0.24, 0.02, 0.74, ply, 0, 0.11, 0, deck);                                     // the deck, in its colour underneath
+    box(0.22, 0.008, 0.7, top, 0, 0.124, 0, deck, true);                             // grip tape
+    [-0.4, 0.4].forEach(function(z){ var k = box(0.2, 0.02, 0.08, ply, 0, 0.13, z, deck); k.rotation.x = z > 0 ? -0.35 : 0.35; });   // nose and tail kick up
+    var wheels = [];
+    [-0.26, 0.26].forEach(function(z){
+      box(0.18, 0.04, 0.04, steel, 0, 0.075, z, deck);                                // a truck
+      [-0.1, 0.1].forEach(function(x){ var w = cyl(0.03, 0.03, 0.035, wheelM, x, 0.035, z, deck, 12); w.rotation.z = PI/2; wheels.push(w); });
+    });
+    return {g: g, deck: deck, wheels: wheels};
+  }
   function bikeColor(key){ return [0xff6b5b, 0x5fd3e6, 0xffb347, 0x6fd38a, 0x9b8cf0, 0xf4f4f4, 0xe0559b, 0x3d6fd1][hashStr(key) % 8]; }
 
   // What a floor of the building (games/hqlobby.js, games/hqbase.js) builds with.
@@ -275,6 +290,7 @@ function mount(el, api){
     plant: function(x, z, sc, seed){ return plant(x, z, sc, seed); }, sky: function(day){ return day ? sky.day : sky.night; },
     bike: function(col){ return bikeModel(col); }, bikeRoll: function(B, d, st){ bikeRoll(B, d, st); }, bikeColor: bikeColor,
     car: function(body, roof){ return carModel(body, roof); }, moto: function(col){ return motoModel(col); },
+    board: function(col){ return boardModel(col); },
     rng: rng, hashStr: hashStr, short: short, rr: rr, crewState: crewState,
     character: function(key, cb){ makeCharacter(key, cb); }, anim: function(ch, n, sp){ setAnim(ch, n, sp); },
     avatar: function(){ return avatar ? {x: avatar.x, z: avatar.z} : null; },
@@ -706,7 +722,8 @@ function mount(el, api){
   var VEHICLES = {
     bike: {top: 10, sprint: 14, acc: 7, rev: 2.5, lean: 0.32, nose: 0},
     moto: {top: 24, acc: 9, rev: 3, lean: 0.42, nose: 0.8, motor: true},
-    car:  {top: 22, acc: 6, rev: 5, lean: 0, nose: 1.9, motor: true}
+    car:  {top: 22, acc: 6, rev: 5, lean: 0, nose: 1.9, motor: true},
+    skate: {top: 9, acc: 5.5, rev: 0, lean: 0, nose: 0, skate: true}     // its physics: games/hqskate.js
   };
   var ride = null;
   function nearBike(){
@@ -720,6 +737,12 @@ function mount(el, api){
       }
       if(d < 1.7 && d < bd){ bd = d; best = i; } });
     return best;
+  }
+  // on a board you stand side-on, knees bent a little
+  function standSkater(ch, on){
+    if(!ch) return;
+    if(on){ ch.o.position.set(0, 0.13, 0); ch.o.rotation.set(0, PI/2, 0); setAnim(ch, "idle"); }
+    else { ch.o.position.set(0, 0, 0); ch.o.rotation.set(0, 0, 0); setAnim(ch, "idle"); }
   }
   function seatMoto(ch, on){
     if(!ch) return;
@@ -740,18 +763,24 @@ function mount(el, api){
     var b = cur.bikes && cur.bikes[i]; if(!b || ride) return;
     var lean = new THREE.Group(); avatar.g.add(lean);
     var kind = VEHICLES[b.kind] ? b.kind : "bike", car = kind === "car";
-    var B = car ? carModel(b.color, b.roof) : kind === "moto" ? motoModel(b.color) : bikeModel(b.color); lean.add(B.g);
-    if(avatar.ch){ lean.add(avatar.ch.o); (car ? seatDriver : kind === "moto" ? seatMoto : seatRider)(avatar.ch, true); }
+    var B = car ? carModel(b.color, b.roof) : kind === "moto" ? motoModel(b.color) : kind === "skate" ? boardModel(b.color) : bikeModel(b.color); lean.add(B.g);
+    if(avatar.ch){ lean.add(avatar.ch.o); (car ? seatDriver : kind === "moto" ? seatMoto : kind === "skate" ? standSkater : seatRider)(avatar.ch, true); }
     b.g.visible = false;
     avatar.airborne = false; avatar.vy = 0; avatar.g.position.y = 0;   // getting on mid-hop lands you on the seat
     if(car){ avatar.x = b.x; avatar.z = b.z; }                        // in the driver's seat, where it is parked
     ride = {idx: i, B: B, lean: lean, speed: 0, steer: 0, kind: kind, V: VEHICLES[kind], car: car};
+    if(kind === "skate") skateStart(b);
     avatar.yaw = b.yaw; walkTo = null; walkDoor = null;
-    E.sfx(kind === "bike" ? "bell" : kind === "car" ? "door" : "go");
+    E.sfx(kind === "bike" ? "bell" : kind === "car" ? "door" : kind === "skate" ? "jump" : "go");
     rideUiSync(true);
   }
-  function dismount(){
+  function dismount(force){
     if(!ride) return;
+    if(ride.kind === "skate"){
+      var st = ride.sk && ride.sk.st;
+      if(st && (st.air || st.grind) && !force) return;               // finish the trick first (E mid-air does nothing)
+      avatar.g.position.y = 0; skateHud(null);
+    }
     var b = cur && cur.bikes && cur.bikes[ride.idx]; if(b) b.g.visible = true;    // back in the rack (or its garage)
     if(avatar.ch){ avatar.g.add(avatar.ch.o); seatRider(avatar.ch, false); }
     if(ride.car){
@@ -798,6 +827,87 @@ function mount(el, api){
     var b = cur.bikes && cur.bikes[ride.idx]; if(b && b.g.visible) b.g.visible = false;   // the street rebuilt under you
     view.goal.set(avatar.x*(cur.follow || 1), cur.camY || 1.4, avatar.z*(cur.follow || 1));
   }
+  /* ---------- skating (games/hqskate.js does the physics) ---------- */
+  // ride.sk = {st (the sim's state, in the park's frame), cx, cz (the park's centre), prev (keys last frame)}
+  var SKATE_BEST = "hq_skate_best";
+  function skateBest(){ try { return Math.max(0, parseInt(localStorage.getItem(SKATE_BEST), 10) || 0); } catch(e){ return 0; } }
+  function skateStart(b){
+    var park = cur.skatepark || {cx: 0, cz: 0}, Sim = HQV.hqSkateSim;
+    var st = Sim.newState(avatar.x - park.cx, avatar.z - park.cz, b.yaw);
+    st.best = skateBest();
+    ride.sk = {st: st, cx: park.cx, cz: park.cz, prev: {}, pop: [], t: 0};
+    skateHud("Hold W to push · A / D carve · Space ollie · in the air: A / D spin, F kickflip, G shove-it · land on the rail or the ledge to grind");
+  }
+  function skateMove(dt){
+    var sk = ride.sk, st = sk.st, Sim = HQV.hqSkateSim, k = keys, pv = sk.prev;
+    var inp = {push: k.KeyW || k.ArrowUp, brake: k.KeyS || k.ArrowDown,
+      steer: (k.KeyA || k.ArrowLeft ? 1 : 0) - (k.KeyD || k.ArrowRight ? 1 : 0),
+      ollie: k.Space && !pv.Space, flip: k.KeyF && !pv.KeyF, shove: k.KeyG && !pv.KeyG};
+    sk.prev = {Space: k.Space, KeyF: k.KeyF, KeyG: k.KeyG};
+    walkTo = null; walkDoor = null;
+    var evs = Sim.step(st, inp, dt, function(x, z){ return blocked(x + sk.cx, z + sk.cz); });
+    evs.forEach(skateEvent);
+    avatar.x = st.x + sk.cx; avatar.z = st.z + sk.cz; avatar.yaw = st.yaw;
+    avatar.g.position.set(avatar.x, st.y, avatar.z); avatar.g.rotation.y = avatar.yaw;
+    // the trick: the whole rider and board turn for a spin, the board alone flips or shoves
+    var calm = E.calm(), B = ride.B;
+    ride.lean.rotation.y = calm ? 0 : st.spin;
+    B.deck.rotation.z = calm ? 0 : st.flip*PI*2;
+    B.deck.rotation.y = calm ? 0 : st.shove*PI;
+    ride.lean.rotation.x = st.bail > 0 && !calm ? -0.5 : 0;
+    if(avatar.ch){
+      avatar.ch.o.position.y = 0.13 - (st.air ? 0.12 : 0);                 // tuck in the air
+      setAnim(avatar.ch, st.bail > 0 ? "sit" : inp.push && !st.air && !st.grind ? "walk" : "idle", inp.push ? 0.8 : 1);
+    }
+    B.wheels.forEach(function(w){ w.rotation.x += st.speed*dt/0.03; });
+    keyMove = Math.abs(st.speed) > 0.3 || st.air; keyRun = false; if(keyMove){ movedHere = true; walkInto(); }
+    var b = cur.bikes && cur.bikes[ride.idx]; if(b && b.g.visible) b.g.visible = false;
+    view.goal.set(avatar.x*(cur.follow || 1), (cur.camY || 1.4) + st.y*0.7, avatar.z*(cur.follow || 1));
+    sk.t += dt; if(sk.t > 0.25){ sk.t = 0; skateHudCombo(st); }
+  }
+  function skateEvent(e){
+    var st = ride && ride.sk && ride.sk.st; if(!st) return;
+    if(e.type === "trick") skatePop(e.name + " +" + e.pts, "trick");
+    else if(e.type === "grind") { skatePop(e.name + "!", "trick"); E.sfx("coin"); }
+    else if(e.type === "land") E.sfx("putt");
+    else if(e.type === "bail"){ skatePop("Bail! " + e.why, "bail"); E.sfx("sink"); if(api.announce) api.announce("Bail. " + e.why + "."); }
+    else if(e.type === "combo"){
+      skatePop((e.mult > 1 ? e.mult + "× combo  " : "") + "+" + e.total + (e.best ? "  · new best!" : ""), e.best ? "best" : "combo");
+      E.sfx(e.best ? "finish" : "coin");
+      if(e.best){ try { localStorage.setItem(SKATE_BEST, String(e.total)); } catch(x){} }
+      if(api.announce) api.announce(e.names.join(", ") + ". " + e.total + " points" + (e.best ? ", a new best." : "."));
+    }
+  }
+  // the skate HUD over the scene: the hint line, the running combo, your best, and popups
+  var skateEl = null;
+  function skateHud(hint){
+    if(hint == null){ if(skateEl){ skateEl.remove(); skateEl = null; } return; }
+    if(!skateEl){
+      skateEl = document.createElement("div"); skateEl.className = "hq3d-skate"; skateEl.setAttribute("aria-hidden", "true");
+      ["hq3d-skate-combo", "hq3d-skate-pops", "hq3d-skate-hint"].forEach(function(cl){ var d = document.createElement("div"); d.className = cl; skateEl.appendChild(d); });
+      ((rideUi && rideUi.parentNode) || el).appendChild(skateEl);
+    }
+    skateEl.querySelector(".hq3d-skate-hint").textContent = hint;
+    skateHudCombo(ride && ride.sk ? ride.sk.st : null);
+  }
+  function skateHudCombo(st){
+    if(!skateEl || !st) return;
+    var c = st.combo, txt = c.mult ? c.names.slice(-4).join(" + ") + "   " + c.score + (c.mult > 1 ? " × " + c.mult : "") : "";
+    skateEl.querySelector(".hq3d-skate-combo").textContent = (txt ? txt + "   ·   " : "") + "Best " + st.best;
+  }
+  function skatePop(text, kind){
+    if(!skateEl) return;
+    var box = skateEl.querySelector(".hq3d-skate-pops"), el = document.createElement("div");
+    el.className = "hq3d-skate-pop " + kind; el.textContent = text; box.appendChild(el);
+    while(box.children.length > 3) box.removeChild(box.firstChild);
+    setTimeout(function(){ if(el.parentNode) el.parentNode.removeChild(el); }, 1600);
+  }
+  // what other players see you doing on a board: {k (hqskate.js K), y (height, decimetres)}
+  function skateNet(){
+    var st = ride && ride.sk && ride.sk.st; if(!st) return null;
+    return {k: HQV.hqSkateSim.kOf(st), y: Math.max(0, Math.min(60, Math.round(st.y*10)))};
+  }
+
   // The "Ride (E)" / "Get off (E)" button over the scene: shows near a parked bike or while riding.
   function rideUiSync(force){
     if(!rideUi) return;
@@ -806,24 +916,27 @@ function mount(el, api){
     if(!force && key === rideUi.dataset.k) return;
     rideUi.dataset.k = key; rideUi.hidden = !key;
     var kind = ride ? ride.kind : (nb && VEHICLES[nb.kind] ? nb.kind : "bike");
-    rideUi.textContent = ride ? (kind === "car" ? "Get out (E)" : "Get off (E)")
-      : kind === "car" ? "\uD83D\uDE97 Drive (E)" : kind === "moto" ? "\uD83C\uDFCD\uFE0F Ride (E)" : "\uD83D\uDEB2 Ride (E)";
-    rideUi.title = ride ? RIDE_HELP[kind] : kind === "car" ? "Get in this car" : kind === "moto" ? "Get on this motorbike" : "Get on this bike";
+    rideUi.textContent = ride ? (kind === "car" ? "Get out (E)" : kind === "skate" ? "Step off (E)" : "Get off (E)")
+      : kind === "car" ? "\uD83D\uDE97 Drive (E)" : kind === "moto" ? "\uD83C\uDFCD\uFE0F Ride (E)" : kind === "skate" ? "\uD83D\uDEF9 Skate (E)" : "\uD83D\uDEB2 Ride (E)";
+    rideUi.title = ride ? RIDE_HELP[kind] : kind === "car" ? "Get in this car" : kind === "moto" ? "Get on this motorbike"
+      : kind === "skate" ? "Step on this skateboard" : "Get on this bike";
     if(key === "on" && force) tipRide();
   }
   var RIDE_HELP = {
     bike: "W / S: pedal and brake · A / D: steer · Shift: pedal harder · E: get off",
     moto: "W: throttle (hold it to keep speeding up) · S: brake, then reverse · A / D: steer · Space: handbrake · E: get off",
-    car: "W: accelerator (hold it to keep speeding up) · S: brake, then reverse · A / D: steer · Space: handbrake · E: get out"
+    car: "W: accelerator (hold it to keep speeding up) · S: brake, then reverse · A / D: steer · Space: handbrake · E: get out",
+    skate: "W: push · S: brake · A / D: carve (in the air: spin) · Space: ollie · F: kickflip · G: shove-it · E: step off"
   };
   function tipRide(){ if(!api.announce || !ride) return;
+    if(ride.kind === "skate") return;                                 // the skate HUD says how
     api.announce(ride.kind === "car" ? "In the car. Hold W to accelerate, S brakes and reverses, A and D steer, Space is the handbrake, E gets out."
       : ride.kind === "moto" ? "On the motorbike. Hold W for throttle, S brakes, A and D steer, Space is the handbrake, E gets off."
       : "On the bike. W and S pedal and brake, A and D steer, Shift pedals harder, E gets off."); }
   function rideToggle(){ if(ride) dismount(); else { var i = nearBike(); if(i >= 0) mount(i); } }
 
   function moveAvatar(dt){
-    if(ride){ rideMove(dt); return; }
+    if(ride){ if(ride.kind === "skate") skateMove(dt); else rideMove(dt); return; }
     var mx = 0, mz = 0;
     if(keys.KeyW || keys.ArrowUp) mz -= 1; if(keys.KeyS || keys.ArrowDown) mz += 1;
     if(keys.KeyA || keys.ArrowLeft) mx -= 1; if(keys.KeyD || keys.ArrowRight) mx += 1;
@@ -938,7 +1051,7 @@ function mount(el, api){
     name = outside(name);
     var w = name === "mission" ? worlds.mission : makeWorld(name); if(!w || fading) return;
     var go = function(){
-      dismount();
+      dismount(true);
       if(avatar.g.parent) avatar.g.parent.remove(avatar.g);
       w.scene.add(avatar.g);
       var sp = (w.spawnFrom && (w.spawnFrom[from] || (from === "city" && w.spawnFrom.base))) || w.spawn;
@@ -954,12 +1067,14 @@ function mount(el, api){
   }
   function onWheel(e){ e.preventDefault(); view.zoom = E.clamp(view.zoom*Math.exp(-e.deltaY*0.0012), 0.6, 3.5); }
   var MOVE_KEYS = {KeyW: 1, KeyA: 1, KeyS: 1, KeyD: 1, ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1, ShiftLeft: 1, ShiftRight: 1, Space: 1};
+  var SKATE_KEYS = {KeyF: 1, KeyG: 1};                                // tricks, only while on a board
   function typing(t){ var tag = (t && t.tagName || "").toLowerCase(); return tag === "input" || tag === "textarea" || tag === "select" || (t && t.isContentEditable); }
   // Capture phase, so walking keys win over the page's single-key shortcuts while HQ is open.
   function onKey(e){
     if(e.code === "KeyE" && e.type === "keydown" && !e.repeat && inst.running && !typing(e.target) && !e.metaKey && !e.ctrlKey && !e.altKey
        && (ride || nearBike() >= 0)){ e.preventDefault(); rideToggle(); return; }
-    if(!inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey || !MOVE_KEYS[e.code]) return;
+    if(!inst.running || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+    if(!MOVE_KEYS[e.code] && !(SKATE_KEYS[e.code] && ride && ride.kind === "skate")) return;
     keys[e.code] = e.type === "keydown";
     if(e.code.indexOf("Shift") < 0) e.preventDefault();
   }
@@ -1052,7 +1167,7 @@ function mount(el, api){
           if(P.bike) seatRider(ch, true);
         }, Array.isArray(p.c) ? p.c : null);
       }
-      P.w = p.w; P.tx = p.x/100; P.tz = p.z/100; P.tyaw = p.r*PI/180; P.a = p.a | 0;
+      P.w = p.w; P.tx = p.x/100; P.tz = p.z/100; P.tyaw = p.r*PI/180; P.a = p.a | 0; P.k = p.k | 0; P.y = Math.max(0, Math.min(60, p.y | 0));
     });
     Object.keys(peers).forEach(function(u){ if(!seen[u]){ var P = peers[u]; if(P.g.parent) P.g.parent.remove(P.g); delete peers[u]; } });
   };
@@ -1065,7 +1180,24 @@ function mount(el, api){
       P.x = jump ? P.tx : P.x + (P.tx - P.x)*k; P.z = jump ? P.tz : P.z + (P.tz - P.z)*k;
       P.yaw = E.angLerp(P.yaw, P.tyaw, k);
       P.g.position.set(P.x, 0, P.z); P.g.rotation.y = P.yaw;
-      var rides = P.a === 3;
+      var rides = P.a === 3, skates = P.a === 4;
+      // on a board: stood on it side-on, lifted to the height they send, the trick they send played here
+      if(skates && !P.board){ if(P.bike){ if(P.ch) P.g.add(P.ch.o); P.g.remove(P.lean); P.bike = null; }
+        P.lean = new THREE.Group(); P.g.add(P.lean); P.board = boardModel(bikeColor(u)); P.lean.add(P.board.g);
+        if(P.ch){ P.lean.add(P.ch.o); standSkater(P.ch, true); } }
+      else if(!skates && P.board){ if(P.ch){ P.g.add(P.ch.o); standSkater(P.ch, false); } P.g.remove(P.lean); P.board = null; P.lean = null; P.gy = 0; }
+      if(P.board){
+        if(P.ch && P.ch.o.parent !== P.lean){ P.lean.add(P.ch.o); standSkater(P.ch, true); }
+        var K = HQV.hqSkateSim ? HQV.hqSkateSim.K : {}, calm = E.calm(), tk = (t || 0)*1000;
+        P.gy = (P.gy || 0) + ((P.y || 0)/10 - (P.gy || 0))*k; P.g.position.y = P.gy;   // smoothed: the frame above set y to 0
+        P.board.deck.rotation.z = !calm && P.k === K.flip ? (tk/450 % 1)*PI*2 : 0;
+        P.board.deck.rotation.y = !calm && P.k === K.shove ? (tk/400 % 1)*PI : 0;
+        P.lean.rotation.y = !calm && P.k === K.spin ? (tk/840 % 1)*PI*2 : 0;
+        P.lean.rotation.x = P.k === K.bail && !calm ? -0.5 : 0;
+        P.px = P.x; P.pz = P.z;
+        if(P.ch){ setAnim(P.ch, P.k === K.bail ? "sit" : "idle"); P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0); }
+        return;
+      }
       if(rides && !P.bike){ P.lean = new THREE.Group(); P.g.add(P.lean); P.bike = bikeModel(bikeColor(u)); P.lean.add(P.bike.g); if(P.ch) P.lean.add(P.ch.o); seatRider(P.ch, true); }
       else if(!rides && P.bike){ if(P.ch){ P.g.add(P.ch.o); seatRider(P.ch, false); } P.g.remove(P.lean); P.bike = null; P.lean = null; }
       if(P.bike){
@@ -1077,8 +1209,10 @@ function mount(el, api){
       if(P.ch){ setAnim(P.ch, rides ? "sit" : P.a === 2 ? "sprint" : P.a === 1 ? "walk" : "idle"); P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0); }
     });
   }
-  // 0 still, 1 walk, 2 run, 3 on a bike (any speed: others draw you riding).
-  inst.moving = function(){ return ride ? 3 : keyMove ? (keyRun ? 2 : 1) : 0; };
+  // 0 still, 1 walk, 2 run, 3 on a bike (any speed: others draw you riding), 4 on a skateboard.
+  inst.moving = function(){ return ride ? (ride.kind === "skate" ? 4 : 3) : keyMove ? (keyRun ? 2 : 1) : 0; };
+  // on a board: what others should see you doing ({k, y}); null otherwise
+  inst.skate = function(){ return ride && ride.kind === "skate" ? skateNet() : null; };
   inst.riding = function(){ return !!ride; };
 
   inst._place = function(x, z){ if(avatar){ avatar.x = x; avatar.z = z; } };    // for tests

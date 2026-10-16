@@ -19,6 +19,7 @@
 var HQV = window.HQV = window.HQV || {};
 HQV.hqWorlds = HQV.hqWorlds || {};
 
+var SKATE_DX = 11;          // the skatepark's centre, this far from the fountain (the bike park is on the other side)
 var MAX_LOTS = 12;          // an Arena has a handful of members (5 today); room to spare
 var BLOCK_W = 36, BLOCK_D = 26;   // a block: room for a whole campus with both wings (m)
 var ROAD = 8;               // the road round every block (m)
@@ -110,7 +111,7 @@ HQV.hqWorlds.city = function(c, w){
 
   var streetG = new THREE.Group(); S.add(streetG);
   var city = {W: 80, D: 60, plaza: {x: 0, z: 0}, lots: [], views: []}, sig = null, lampGlows = [], cars = [], dyn = {facMats: [], glows: [], beacons: [], flags: [], leds: []};
-  var fount = null, bikes = [];
+  var fount = null, bikes = [], skate = null;
   var floor = null;
   function flat(geo, m, y){ var o = new THREE.Mesh(geo, m); o.rotation.x = -PI/2; o.position.y = y; o.receiveShadow = true; streetG.add(o); return o; }
 
@@ -228,12 +229,13 @@ HQV.hqWorlds.city = function(c, w){
     // the plaza on the middle block: a fountain, the bike park beside it, and the city's name
     fount = fountain(); fount.g.position.set(P.x, 0, P.z); streetG.add(fount.g);
     bikes = bikePark(P.x + 8.6, P.z);
+    skate = skatePark(P.x - SKATE_DX, P.z); w.skatepark = skate;
     var nb = city.lots.length;
     var cityL = c.label("Arena City · " + nb + " HQ" + (nb === 1 ? "" : "s"), HEX.amber, 1.3); cityL.position.set(P.x, 6.4, P.z); streetG.add(cityL);
     function tree(x, z, sc){ var tg = new THREE.Group(); tg.position.set(x, 0, z); tg.scale.setScalar(sc); streetG.add(tg);
       cyl(0.2, 0.28, 1.2, mat(0x5a3d2a), 0, 0.6, 0, tg, 8);
       for(var cn = 0; cn < 3; cn++) c.add(new THREE.Mesh(new THREE.ConeGeometry(1.3 - cn*0.3, 1.6, 8), mat([0x2f6b45, 0x2a5f3d, 0x357a4f][cn])), 0, 1.6 + cn*0.9, 0, tg); }
-    [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function(k){ var pt = new THREE.Group(); pt.position.set(P.x + k[0]*(BLOCK_W/2 - 3), 0, P.z + k[1]*(BLOCK_D/2 - 3)); streetG.add(pt);
+    [[1, -1], [1, 1]].forEach(function(k){ var pt = new THREE.Group();          // (the other two corners are the skatepark) pt.position.set(P.x + k[0]*(BLOCK_W/2 - 3), 0, P.z + k[1]*(BLOCK_D/2 - 3)); streetG.add(pt);
       cyl(0.2, 0.28, 1.2, mat(0x5a3d2a), 0, 0.6, 0, pt, 8); sph(1.2, mat(0x3c8a4f, {roughness: 0.9}), 0, 2.1, 0, pt); });
     // street lamps on the corner of every crossing
     function lamp(x, z){ cyl(0.07, 0.1, 3.4, mat(0x2b3a48, {metalness: 0.6}), x, 1.7, z, streetG, 8); sph(0.16, emis(0xfff1d6, 0xffd9a0, 2), x, 3.3, z, streetG);
@@ -324,6 +326,51 @@ HQV.hqWorlds.city = function(c, w){
     F.jet.geometry.attributes.position.needsUpdate = true;
   }
 
+  /* ---------- the skatepark: the plaza's other half (games/hqskate.js is its shape and physics) ---------- */
+  // Two quarter pipes facing each other, a fun box in the middle, a ledge and a rail, and a row of
+  // boards at the fountain end: walk up to one and press E. Built from HQV.hqSkatePark, so every
+  // ramp you see is the one you ride on.
+  function skatePark(cx, cz){
+    var SP = HQV.hqSkatePark; if(!SP) return null;
+    var g = new THREE.Group(); g.position.set(cx, 0, cz); streetG.add(g);
+    var concrete = mat(0xa7b0b9, {roughness: 0.85}), side = mat(0x77818b, {roughness: 0.9}), steel = mat(0xc4ccd4, {metalness: 0.85, roughness: 0.25});
+    var paint = emis(0xffb347, 0xffb347, 0.25);
+    var floorM = new THREE.MeshStandardMaterial({color: 0x8f99a3, roughness: 0.8});
+    var fl = new THREE.Mesh(new THREE.PlaneGeometry(2*SP.HW, 2*SP.HD), floorM); fl.rotation.x = -PI/2; fl.position.y = 0.025; fl.receiveShadow = true; g.add(fl);
+    [-1, 1].forEach(function(sx){ box(0.08, 0.02, 2*SP.HD, paint, sx*(SP.HW - 0.05), 0.04, 0, g, true); });   // painted edges
+    // an extruded profile: pts are (along z, up) pairs; it is laid across the park's width (x)
+    function profile(pts, depth, m){
+      var sh = new THREE.Shape(); sh.moveTo(pts[0][0], pts[0][1]); for(var i = 1; i < pts.length; i++) sh.lineTo(pts[i][0], pts[i][1]);
+      var o = new THREE.Mesh(new THREE.ExtrudeGeometry(sh, {depth: depth, bevelEnabled: false}), m); o.castShadow = true; o.receiveShadow = true; return o;
+    }
+    var Q = SP.QP;
+    [-1, 1].forEach(function(end){
+      var pts = [[Q.from, 0]];
+      for(var i = 1; i <= 24; i++){ var t = Q.run*i/24; pts.push([Q.from + t, SP.height(0, end*(Q.from + t))]); }
+      pts.push([Q.from + Q.run + 0.4, SP.QP_TOP], [Q.from + Q.run + 0.4, 0]);
+      var qp = profile(pts, 2*SP.HW, [side, concrete]);
+      qp.rotation.y = end > 0 ? -PI/2 : PI/2; qp.position.x = end > 0 ? SP.HW : -SP.HW; g.add(qp);
+      var cop = cyl(0.06, 0.06, 2*SP.HW, steel, 0, SP.QP_TOP + 0.02, end*(Q.from + Q.run), g, 10); cop.rotation.z = PI/2;   // the coping
+    });
+    var B = SP.BOX, box1 = profile([[-B.hd, 0], [-B.flat, B.top], [B.flat, B.top], [B.hd, 0]], 2*B.hw, [side, concrete]);
+    box1.rotation.y = -PI/2; box1.position.x = B.hw; g.add(box1);
+    var Lg = SP.LEDGE;
+    box(Lg.x1 - Lg.x0, Lg.top, 2*Lg.hd, side, (Lg.x0 + Lg.x1)/2, Lg.top/2, 0, g);
+    box(0.06, 0.04, 2*Lg.hd, steel, Lg.x1 - 0.03, Lg.top + 0.01, 0, g);              // its steel edge (grind it)
+    var R = SP.RAIL, rail = cyl(0.04, 0.04, 2*R.hd, steel, R.x, R.top, 0, g, 10); rail.rotation.x = PI/2;
+    [-R.hd, 0, R.hd].forEach(function(z){ cyl(0.03, 0.03, R.top, steel, R.x, R.top/2, z, g, 8); });
+    // the boards, side by side at the fountain end, noses into the park
+    var list = [], cols = [0xff6b5b, 0x5fd3e6, 0xffb347, 0x9b8cf0];
+    cols.forEach(function(col, i){
+      var lx = SP.HW - 0.5, lz = -7.2 + i*0.55, Bd = c.board(col);
+      Bd.g.position.set(lx, 0, lz); Bd.g.rotation.y = -PI/2; g.add(Bd.g);
+      list.push({g: Bd.g, x: cx + lx, z: cz + lz, yaw: -PI/2, color: col, kind: "skate"});
+    });
+    var sign = c.label("\uD83D\uDEF9 Skatepark · press E on a board", HEX.amber, 0.7); sign.position.set(SP.HW - 0.5, 2.4, -6.4); g.add(sign);
+    list.forEach(function(b){ bikes.push(b); });
+    return {cx: cx, cz: cz, boards: list};
+  }
+
   /* ---------- the bike park: a rack of bikes beside the fountain ---------- */
   // Walk up to one and press E (hq3d.js does the riding). w.bikes lists them: {g, x, z, yaw, color}.
   function bikePark(cx, cz){
@@ -353,6 +400,7 @@ HQV.hqWorlds.city = function(c, w){
   function blocked(x, z){
     if(Math.abs(x) > city.W/2 + 18 || Math.abs(z) > city.D/2 + 18) return true;
     if(Math.hypot(x - city.plaza.x, z - city.plaza.z) < FOUNT_R + 0.35) return true;   // the fountain
+    if(skate && HQV.hqSkatePark.walkBlocked(x - skate.cx, z - skate.cz)) return true;      // its ramps (on foot or wheels; boards ride them)
     var all = city.lots.concat(city.views);
     for(var i = 0; i < all.length; i++){
       var L = all[i], rx = x - L.x, rz = z - L.z, c0 = Math.cos(-L.rot), s0 = Math.sin(-L.rot);

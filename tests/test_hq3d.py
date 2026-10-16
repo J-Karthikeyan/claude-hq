@@ -49,13 +49,13 @@ class HqWiring(unittest.TestCase):
         self.assertIn('hqModeSave("3d")', self.html)
 
     def test_scene_files_are_served(self):
-        for name in ("engine.js", "hq3d.js", "hqlobby.js", "hqbase.js", "hqcity.js"):
+        for name in ("engine.js", "hq3d.js", "hqlobby.js", "hqbase.js", "hqskate.js", "hqcity.js"):
             got = dashboard.game_file(name)
             self.assertIsNotNone(got, name)
             self.assertEqual(dashboard.game_cache_control(name), "no-store")
 
     def test_nothing_leaves_the_machine(self):
-        for name in ("hq3d.js", "hqlobby.js", "hqbase.js", "hqcity.js"):
+        for name in ("hq3d.js", "hqlobby.js", "hqbase.js", "hqskate.js", "hqcity.js"):
             with open(os.path.join(ROOT, "games", name), encoding="utf-8") as f:
                 src = f.read()
             for bad in ("fetch(", "XMLHttpRequest", "WebSocket", "sendBeacon", "MP.send"):
@@ -68,7 +68,7 @@ class HqWiring(unittest.TestCase):
         self.assertIn('view: "@mission"', src["hqlobby"])
         self.assertIn('view: "@base"', src["hqlobby"])
         self.assertIn('view: "@lobby"', src["hq3d"])
-        self.assertIn('["hq3d","hqlobby","hqbase","hqcity"]', dashboard.assemble_index())
+        self.assertIn('["hq3d","hqlobby","hqbase","hqskate","hqcity"]', dashboard.assemble_index())
 
 
 @unittest.skipUnless(shutil.which("node"), "node not installed")
@@ -247,6 +247,86 @@ console.log(JSON.stringify({
 """
 
 
+SKATE = r"""
+const fs = require('fs');
+const window = {HQV: {}};
+for (const f of process.argv.slice(1)) new Function('window', fs.readFileSync(f, 'utf8'))(window);
+const P = window.HQV.hqSkatePark, S = window.HQV.hqSkateSim, PI = Math.PI;
+const rep = (n, inp) => Array.from({length: n}, () => inp);
+function run(st, frames){ const ev = []; let maxY = 0; frames.forEach(inp => { S.step(st, inp, 1/30).forEach(e => ev.push(e)); maxY = Math.max(maxY, st.y); }); return {ev, maxY, st}; }
+const names = r => r.ev.filter(e => e.type === 'trick').map(e => e.name);
+const types = r => r.ev.map(e => e.type);
+const flat = () => Object.assign(S.newState(-1, 4.5, PI/2), {speed: 4});
+// a quarter pipe: push at it, launch off the lip, land, roll back down
+const qp = run(S.newState(0, 3.5, PI), [...rep(70, {push: 1}), ...rep(80, {})]);
+// an ollie kickflip on the flat, then long enough for the combo to bank
+const kf = run(flat(), [{ollie: 1}, {flip: 1}, ...rep(90, {})]);
+// a 180: spin in the air
+const s180 = run(flat(), [{ollie: 1}, ...rep(10, {steer: 1}), ...rep(80, {})]);
+// a kickflip started too late to finish: a bail, the combo lost
+const bail = run(flat(), [{ollie: 1}, ...rep(22, {}), {flip: 1}, ...rep(40, {})]);
+// a half-finished spin: landed sideways
+const side = run(flat(), [{ollie: 1}, ...rep(4, {steer: 1}), ...rep(60, {})]);
+// the rail: ride alongside it, ollie onto it, grind to its end
+const rail = run(Object.assign(S.newState(P.RAIL.x, -7.4, 0), {speed: 5}), [...rep(6, {}), {ollie: 1}, ...rep(90, {})]);
+// the same frames at 10 fps and at 60 fps reach the same lip (sub-steps)
+function lip(fps){ const st = S.newState(0, 3.5, PI); let t = 0, y = 0; while(t < 5){ S.step(st, {push: 1}, 1/fps); y = Math.max(y, st.y); t += 1/fps; } return y; }
+console.log(JSON.stringify({
+  qpAir: names(qp).includes('Air'), qpHigh: qp.maxY > P.QP_TOP + 1, qpBack: !qp.st.air && qp.st.speed > 0 && Math.abs(qp.st.z) < 9,
+  kf: names(kf), kfCombo: kf.ev.filter(e => e.type === 'combo').map(e => e.total),
+  s180: names(s180), s180Fakie: s180.st.fakie,
+  bail: types(bail).includes('bail') && !types(bail).includes('combo'), side: side.ev.filter(e => e.type === 'bail').map(e => e.why),
+  rail: types(rail).includes('grind') && names(rail).some(n => n === 'Rail grind'),
+  fps: [lip(10), lip(60)].map(v => +v.toFixed(1)),
+  shape: {top: +P.QP_TOP.toFixed(2), box: P.height(0, 0), ledge: P.height(-4.5, 0), floor: P.height(-1, 4.5), off: P.height(9, 0)},
+  walk: [P.walkBlocked(0, 0), P.walkBlocked(-1, 4.5), P.walkBlocked(P.RAIL.x, 0), P.walkBlocked(0, 9.5), P.walkBlocked(20, 0)],
+  k: [S.kOf(S.newState()), S.K.flip, S.K.grind]
+}));
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class Skatepark(unittest.TestCase):
+    """games/hqskate.js: the park's shape and a skater's physics, tricks and combo (pure, so run under node)."""
+
+    def test_skating(self):
+        r = subprocess.run(["node", "-e", SKATE, os.path.join(ROOT, "games", "hqskate.js")],
+                           capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        got = json.loads(r.stdout)
+        self.assertTrue(got["qpAir"])                                # off the quarter pipe's lip
+        self.assertTrue(got["qpHigh"])                               # well above it
+        self.assertTrue(got["qpBack"])                               # and back down the ramp, rolling
+        self.assertEqual(got["kf"], ["Ollie", "Kickflip"])           # a flat ollie is not "big air"
+        self.assertEqual(got["kfCombo"], [(100 + 300)*2])            # banked after the gap: points x tricks
+        self.assertEqual(got["s180"], ["Ollie", "180"])
+        self.assertTrue(got["s180Fakie"])                            # a 180 lands you riding backwards
+        self.assertTrue(got["bail"])                                 # a flip still going when you land
+        self.assertEqual(got["side"], ["Landed sideways"])
+        self.assertTrue(got["rail"])                                 # caught the rail and ground it
+        self.assertAlmostEqual(got["fps"][0], got["fps"][1], delta=0.15)   # the same at 10 fps and 60 fps
+        self.assertEqual(got["shape"], {"top": 2.09, "box": 0.55, "ledge": 0.45, "floor": 0, "off": 0})
+        self.assertEqual(got["walk"], [True, False, True, True, False])  # on foot you walk round the ramps
+        self.assertEqual(got["k"], [0, 2, 5])
+
+    def test_wiring(self):
+        city = open(os.path.join(ROOT, "games", "hqcity.js"), encoding="utf-8").read()
+        src = open(os.path.join(ROOT, "games", "hq3d.js"), encoding="utf-8").read()
+        page = open(os.path.join(ROOT, "ui", "app", "22-hq.js"), encoding="utf-8").read()
+        self.assertIn('skate = skatePark(P.x - SKATE_DX, P.z); w.skatepark = skate;', city)
+        self.assertIn('list.push({g: Bd.g, x: cx + lx, z: cz + lz, yaw: -PI/2, color: col, kind: "skate"});', city)
+        self.assertIn('if(skate && HQV.hqSkatePark.walkBlocked(x - skate.cx, z - skate.cz)) return true;', city)
+        self.assertIn('if(ride){ if(ride.kind === "skate") skateMove(dt); else rideMove(dt); return; }', src)
+        self.assertIn('return ride ? (ride.kind === "skate" ? 4 : 3) : keyMove', src)
+        # a 4, with its trick and height, only to an Arena that lists "skate"
+        self.assertIn('if(a===4 && !hqNetCan("skate")) a=2;', page)
+        self.assertIn('if(sk){ msg.k=sk.k|0; msg.y=sk.y|0; }', page)
+        self.assertIn('msg.a,msg.k,msg.y].join(",")', page)               # a new trick is news
+        css = open(os.path.join(ROOT, "ui", "hq.css"), encoding="utf-8").read()
+        self.assertIn("html.hq-calm .hq3d-skate-pop{animation:none}", css)
+        self.assertIn("@media (prefers-reduced-motion: reduce){.hq3d-skate-pop{animation:none}}", css)
+
+
 @unittest.skipUnless(shutil.which("node"), "node not installed")
 class ArenaCity(unittest.TestCase):
     """Arena City: every open HQ and every tab's building on a grid of blocks, the same layout for everyone."""
@@ -270,7 +350,7 @@ class ArenaCity(unittest.TestCase):
         self.assertIn('kind: "moto"});', city)                                    # and its motorbike ridable
         self.assertIn('lotExtraBlocked(lx, lz, !L.car || L.car.g.visible)', city) # the parked car blocks; the driven one does not
         src = open(os.path.join(ROOT, "games", "hq3d.js"), encoding="utf-8").read()
-        self.assertIn('var B = car ? carModel(b.color, b.roof) : kind === "moto" ? motoModel(b.color) : bikeModel(b.color);', src)
+        self.assertIn('var B = car ? carModel(b.color, b.roof) : kind === "moto" ? motoModel(b.color) : kind === "skate" ? boardModel(b.color) : bikeModel(b.color);', src)
         self.assertIn('(!nose || !blocked(nx + sy*nose, nz + cy*nose))', src)    # the bumper stops at walls
         self.assertIn('var V = ride.V, top = V.sprint && (keys.ShiftLeft || keys.ShiftRight) ? V.sprint : V.top;', src)  # Shift only pedals a bicycle harder
         self.assertIn('if(V.motor && keys.Space)', src)                          # motor vehicles: Space is the handbrake
@@ -309,7 +389,7 @@ class ArenaCity(unittest.TestCase):
         self.assertIn('visit: function(uid){ hqVisit(uid, {from:"city"}); }', html)
         src = open(os.path.join(ROOT, "games", "hq3d.js"), encoding="utf-8").read()
         self.assertIn('d.view.indexOf("visit:") === 0', src)
-        self.assertIn('return ride ? 3 : keyMove', src)                 # a rider reports a = 3
+        self.assertIn('return ride ? (ride.kind === "skate" ? 4 : 3) : keyMove', src)   # a rider reports a = 3, a skater 4
         city = open(os.path.join(ROOT, "games", "hqcity.js"), encoding="utf-8").read()
         self.assertIn('bikes = bikePark(P.x + 8.6, P.z);', city)         # the bike park beside the fountain
         self.assertIn('city.views.forEach(viewBuilding);', city)         # every tab has a building on the street

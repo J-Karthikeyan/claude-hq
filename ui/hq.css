@@ -2037,6 +2037,20 @@ html.hq-calm #confetti{display:none!important}
   color:var(--bg);background:var(--good);border:2px solid color-mix(in srgb,var(--good) 60%,var(--ink));box-shadow:var(--shadow-lg);cursor:pointer}
 .hq3d-ride:hover{filter:brightness(1.08)}
 .hq3d-ride:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+/* the skate HUD over the 3D scene while on a board: the running combo, trick popups, the keys */
+.hq3d-skate{position:absolute;left:50%;top:66px;z-index:4;transform:translateX(-50%);width:min(92%,640px);display:flex;flex-direction:column;
+  align-items:center;gap:6px;pointer-events:none;text-align:center}
+.hq3d-skate-combo{font:700 14px/1.3 var(--mono);color:var(--ink);background:color-mix(in srgb,var(--panel) 88%,transparent);
+  border:1px solid var(--line);border-radius:999px;padding:6px 14px;box-shadow:var(--shadow-lg)}
+.hq3d-skate-hint{font-size:12px;color:var(--muted);background:color-mix(in srgb,var(--panel) 80%,transparent);border-radius:var(--radius-sm);padding:4px 10px}
+.hq3d-skate-pops{display:flex;flex-direction:column;align-items:center;gap:4px;min-height:24px}
+.hq3d-skate-pop{font-weight:800;font-size:18px;color:var(--brand);text-shadow:0 1px 0 var(--panel),0 0 8px var(--panel);animation:hq3d-skate-pop 1.6s var(--ease) forwards}
+.hq3d-skate-pop.combo{color:var(--good);font-size:22px}
+.hq3d-skate-pop.best{color:var(--gold);font-size:24px}
+.hq3d-skate-pop.bail{color:var(--need)}
+@keyframes hq3d-skate-pop{0%{opacity:0;transform:translateY(8px) scale(.9)}15%{opacity:1;transform:none}80%{opacity:1}100%{opacity:0;transform:translateY(-10px)}}
+html.hq-calm .hq3d-skate-pop{animation:none}
+@media (prefers-reduced-motion: reduce){.hq3d-skate-pop{animation:none}}
 .hq3d-ride:not([hidden]){animation:hq3d-ride-in .25s var(--ease)}
 @keyframes hq3d-ride-in{from{opacity:0;transform:translate(-50%,-8px)}}
 html.hq-calm .hq3d-ride{animation:none}

@@ -15,7 +15,7 @@ function hqLoadScripts(){
   if(HQ3D.load) return HQ3D.load;
   // The engine (shared with the Valley's 3D games), the HQ host + Mission Control, then the
   // other floors of the building: the Lobby and the Base outside.
-  var files = ((window.HQV && window.HQV.engine) ? [] : ["engine"]).concat((window.HQV && window.HQV.avatar3d) ? [] : ["avatar3d"], ["hq3d","hqlobby","hqbase","hqcity"]);
+  var files = ((window.HQV && window.HQV.engine) ? [] : ["engine"]).concat((window.HQV && window.HQV.avatar3d) ? [] : ["avatar3d"], ["hq3d","hqlobby","hqbase","hqskate","hqcity"]);
   HQ3D.load = files.reduce(function(p, name){
     return p.then(function(){ return new Promise(function(res, rej){
       var sc=document.createElement("script"); sc.src="/games/"+name+".js"; sc.async=false;
@@ -446,9 +446,13 @@ function hqNetSend(){
   }
   var a=HQ3D.inst.moving ? HQ3D.inst.moving() : 0;
   if(a===3 && !hqNetCan("ride")) a=2;   // an Arena without bikes drops a 3 (and you would freeze): send "running"
+  if(a===4 && !hqNetCan("skate")) a=2;  // nor does one without skateboards know a 4
   var msg={type:"game", g:"hq", op:"pos", w:w.world, x:Math.round(w.x*100), z:Math.round(w.z*100),
            r:Math.round(((w.yaw*180/Math.PI)%360+360)%360), a:a};
-  var key=[msg.w,msg.x,msg.z,msg.r,msg.a].join(","), now=Date.now();
+  // on a board: the trick you are doing (k) and how high you are (y, decimetres), so others see it
+  var sk = a===4 && HQ3D.inst.skate ? HQ3D.inst.skate() : null;
+  if(sk){ msg.k=sk.k|0; msg.y=sk.y|0; }
+  var key=[msg.w,msg.x,msg.z,msg.r,msg.a,msg.k,msg.y].join(","), now=Date.now();
   if(key===HQNET.last && now-HQNET.sentAt<2000) return;
   HQNET.last=key; HQNET.sentAt=now;
   try { ws.send(JSON.stringify(msg)); } catch(e){}
@@ -456,7 +460,7 @@ function hqNetSend(){
 setInterval(function(){ if(VIEW==="hq") hqSync(); hqNetSync(); hqNetSend(); }, 125);
 // "Here now": who else is in this HQ, and on which floor.
 var HQ_FLOOR_NAME = {base:"outside", city:"in Arena City", lobby:"in the Lobby", mission:"in Mission Control"};
-// (riding a bike shows as "on a bike" beside the floor)
+// (riding a bike shows as "on a bike" beside the floor, a skateboard as "skating")
 function hqRenderHere(){
   var box=$("hqHere"); if(!box) return;
   var ps=HQNET.peers||[];
@@ -464,7 +468,7 @@ function hqRenderHere(){
   if(!ps.length) return;
   var h=document.createElement("b"); h.textContent="Here now"; box.appendChild(h);
   ps.slice(0,12).forEach(function(p){
-    var d=document.createElement("button"); d.type="button"; d.className="hq3d-person"; d.textContent=(p.n||"Visitor")+" · "+(HQ_FLOOR_NAME[p.w]||"")+(p.a===3 ? " · on a bike" : "");
+    var d=document.createElement("button"); d.type="button"; d.className="hq3d-person"; d.textContent=(p.n||"Visitor")+" · "+(HQ_FLOOR_NAME[p.w]||"")+(p.a===3 ? " · on a bike" : p.a===4 ? " · skating" : "");
     d.title="Open their trainer card"; d.addEventListener("click", function(){ if(typeof tcardOpen==="function") tcardOpen(p.u); });
     if(typeof cosFrameApply==="function") cosFrameApply(d, p.f);
     box.appendChild(d);

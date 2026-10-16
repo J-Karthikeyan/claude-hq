@@ -330,6 +330,13 @@ and feature guide.
 
 ## Changelog
 
+- **Unreleased: Arena City garages and a skatepark.** Every HQ has a garage in its own colours with a
+  drivable car, a motorbike and a bicycle (E; motor vehicles have an accelerator and a handbrake). The
+  plaza has a skatepark: two quarter pipes, a fun box, a ledge and a rail, a row of boards to step on,
+  ollies, airs, 180/360/540 spins, kickflips, shove-its, grinds, bails and combos with your best kept on
+  this machine. Others in the Arena see you skate and your tricks (presence `a = 4` with a trick `k` and a
+  height `y`, behind the new `"skate"` capability; the Rust Arena stores and relays them).
+
 - **Unreleased** — **HQ Notch** (`notch/`, macOS, optional). A notch companion app: every live Claude
   Code session as its HQ Pokémon (same species, evolution and shiny as the dashboard), animated by state
   (working, needs you, done, error, idle), with HQ's session titles, the current tool and a live ticker

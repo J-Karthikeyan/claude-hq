@@ -90,6 +90,10 @@ struct Person {
     /// small integers the page turns into a model, colours and add-ons. None
     /// until they send one; older pages never do, and get the hashed look.
     look: Option<Vec<u8>>,
+    /// On a skateboard (a = 4, the "skate" capability): the trick they are doing
+    /// (`k`, 0..=SKATE_K_MAX) and how high they are (`y`, decimetres, 0..=SKATE_Y_MAX),
+    /// so others see the board flip and the air. None whenever a is not 4.
+    skate: Option<(u8, u8)>,
     /// (tokens, when) -- Python's `[POS_BURST, t]` list.
     bucket: (f64, f64),
 }
@@ -124,6 +128,7 @@ impl Hq {
                 r: 0,
                 a: json!(0),
                 look: None,
+                skate: None,
                 bucket: (POS_BURST, t),
             });
         }
@@ -168,11 +173,21 @@ impl Hq {
         if !FLOORS.contains(&w) || !anim_ok(&a) {
             return false;
         }
+        // On a board, its trick and height ride along: absent means 0, and a bad
+        // one drops the whole frame like any other field. Off a board both are
+        // ignored (an older page never sends them).
+        let skate = if a.as_f64() == Some(4.0) {
+            let (Some(k), Some(y)) = (small_int(msg.get("k"), SKATE_K_MAX), small_int(msg.get("y"), SKATE_Y_MAX)) else { return false };
+            Some((k, y))
+        } else {
+            None
+        };
         p.w = w.to_string();
         p.x = super::py_trunc(x); // Python's int(x): toward zero
         p.z = super::py_trunc(z);
         p.r = super::deg360(r); // int(r) % 360, so -90 is 270
         p.a = a;
+        p.skate = skate;
         self.dirty = true;
         true
     }
@@ -218,6 +233,11 @@ impl Hq {
                     if let Some(c) = &p.look {
                         m.insert("c".into(), json!(c));
                     }
+                    // only for someone on a board, so every other listing is unchanged
+                    if let Some((k, y)) = p.skate {
+                        m.insert("k".into(), json!(k));
+                        m.insert("y".into(), json!(y));
+                    }
                     Value::Object(m)
                 })
                 .collect(),
@@ -233,10 +253,23 @@ fn anim_ok(a: &Value) -> bool {
     match a {
         Value::Bool(_) => true,
         // 0 still, 1 walk, 2 run -- and 3, riding a bike in Arena City (the "ride"
-        // capability in protocol.rs; a page only sends 3 to an Arena that lists it).
-        Value::Number(n) => n.as_f64().is_some_and(|f| f == 0.0 || f == 1.0 || f == 2.0 || f == 3.0),
+        // capability in protocol.rs; a page only sends 3 to an Arena that lists it),
+        // and 4, on a skateboard (the "skate" capability, likewise).
+        Value::Number(n) => n.as_f64().is_some_and(|f| f == 0.0 || f == 1.0 || f == 2.0 || f == 3.0 || f == 4.0),
         _ => false,
     }
+}
+
+/// A skater's trick id (games/hqskate.js `K`) and height (decimetres) top out here.
+const SKATE_K_MAX: u8 = 15;
+const SKATE_Y_MAX: u8 = 60;
+
+/// A whole number in 0..=max, or 0 when absent; None (drop the frame) for
+/// anything else -- a fraction, a bool, a string, out of range.
+fn small_int(v: Option<&Value>, max: u8) -> Option<u8> {
+    let Some(v) = v else { return Some(0) };
+    let f = super::num_in(Some(v), 0.0, f64::from(max))?;
+    (f.fract() == 0.0).then_some(f as u8)
 }
 
 /// The longest character array and the largest value in it (the page's spec is
@@ -432,6 +465,35 @@ mod tests {
     }
 
     #[test]
+    fn a_skater_carries_a_trick_and_a_height_and_nobody_else_does() {
+        let mut p = Hq::default();
+        p.enter("u", json!({"handle": "u"}), 0.0);
+        // Walking: k and y are ignored, and the listing has neither.
+        assert!(p.pos("u", &json!({"w": "city", "x": 0, "z": 0, "r": 0, "a": 1, "k": 2, "y": 9}), 0.1));
+        assert!(p.listing()[0].get("k").is_none() && p.listing()[0].get("y").is_none());
+        // On a board: both ride in the listing, after everything else.
+        assert!(p.pos("u", &json!({"w": "city", "x": 0, "z": 0, "r": 0, "a": 4, "k": 2, "y": 21}), 0.2));
+        let l = p.listing();
+        assert_eq!((l[0]["a"].clone(), l[0]["k"].clone(), l[0]["y"].clone()), (json!(4), json!(2), json!(21)));
+        let keys: Vec<&String> = l[0].as_object().unwrap().keys().collect();
+        assert_eq!(keys.last().map(|k| k.as_str()), Some("y"));
+        // Absent means 0 (rolling, on the ground).
+        assert!(p.pos("u", &json!({"w": "city", "x": 0, "z": 0, "r": 0, "a": 4}), 0.3));
+        assert_eq!((p.listing()[0]["k"].clone(), p.listing()[0]["y"].clone()), (json!(0), json!(0)));
+        // A bad trick or height drops the whole frame: the position does not move either.
+        for bad in [json!({"k": 16}), json!({"k": -1}), json!({"k": 1.5}), json!({"k": true}), json!({"k": "2"}),
+                    json!({"y": 61}), json!({"y": -1}), json!({"y": 0.5}), json!({"y": null})] {
+            let mut m = json!({"w": "city", "x": 500, "z": 0, "r": 0, "a": 4});
+            for (k, v) in bad.as_object().unwrap() { m[k] = v.clone(); }
+            assert!(!p.pos("u", &m, 1.0), "accepted {m}");
+        }
+        assert_eq!(p.listing()[0]["x"], json!(0));
+        // Stepping off clears them.
+        assert!(p.pos("u", &json!({"w": "city", "x": 0, "z": 0, "r": 0, "a": 0}), 2.0));
+        assert!(p.listing()[0].get("k").is_none());
+    }
+
+    #[test]
     fn a_bad_floor_or_a_missing_field_drops_the_whole_frame() {
         let mut p = Hq::default();
         p.enter("u", json!({"handle": "u"}), 0.0);
@@ -481,7 +543,7 @@ mod tests {
         p.enter("u", json!({"handle": "u"}), 0.0);
         for (a, keep) in [(json!(0), true), (json!(1), true), (json!(2), true),
                           (json!(2.0), true), (json!(true), true), (json!(false), true),
-                          (json!(3), true), (json!(4), false), (json!(-1), false), (json!(1.5), false),
+                          (json!(3), true), (json!(4), true), (json!(5), false), (json!(-1), false), (json!(1.5), false),
                           (json!("1"), false), (json!([1]), false)] {
             let m = json!({"w": "base", "x": 0, "z": 0, "r": 0, "a": a});
             assert_eq!(p.pos("u", &m, 1.0), keep, "a = {a}");

@@ -22,7 +22,7 @@ pub const GAMES: &[(&str, i64, &[&str])] = &[
     ("kart", 2, &["scale", "tracks"]), // v2: geometry scale + server track list
     ("plat", 1, &[]),
     ("fps", 1, &[]),
-    ("hq", 1, &["ride", "look"]),  // "ride": a = 3 (on a bike); "look": the 3D character (`c`)
+    ("hq", 1, &["ride", "look", "skate"]),  // "ride": a = 3 (on a bike); "look": the 3D character (`c`); "skate": a = 4 + its trick `k` and height `y`
     ("type", 1, &[]),
     ("td", 1, &[]),
     ("bowl", 1, &[]),
@@ -66,8 +66,8 @@ mod tests {
         assert_eq!(info["maps"], json!({"v": 1}));
         assert_eq!(info["games"]["kart"], json!({"v": 2, "caps": ["scale", "tracks"]}));
         assert_eq!(info["games"]["plat"], json!({"v": 1, "caps": []}));
-        // HQ presence carries a = 3 (riding a bike in Arena City) only where this is listed.
-        assert_eq!(info["games"]["hq"], json!({"v": 1, "caps": ["ride", "look"]}));
+        // HQ presence carries a = 3 (riding a bike in Arena City) and a = 4 (skating) only where these are listed.
+        assert_eq!(info["games"]["hq"], json!({"v": 1, "caps": ["ride", "look", "skate"]}));
         assert_eq!(version("fps"), 1);
         assert_eq!(version("pond"), 1);
         // An unknown game still answers 1, as Python's PROTOCOL.get(g, {}) does.
