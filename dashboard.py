@@ -2505,6 +2505,11 @@ def build_payload():
     except Exception:
         meta = {}
 
+    try:
+        merge_evo_choices(sessions, load_evo_choices())
+    except Exception:
+        pass
+
     stuck_secs = int(config.get("stuckMinutes", 15)) * 60
     stuck_ids = []
     for s in sessions:
@@ -4210,6 +4215,124 @@ def save_meta(sid, patch):
 
 
 # --------------------------------------------------------------------------- #
+# Evolution picks (which branch / Mega form a session's Pokemon becomes)
+#
+# The page used to keep these only in its own localStorage (`hq_evo_choice`), so
+# another browser or the notch never saw them. Now the page also POSTs each pick
+# here; they live in evo-choices.json (0600, git-ignored, never leaves the
+# machine) and ride in /api/sessions as `creature.evo`. The allowed values are
+# read from ui/app/06-trainer-packs.js itself (POKE_EVO / POKE_BRANCH /
+# MEGA_FORMS), so the server and the page cannot disagree on what is valid.
+# --------------------------------------------------------------------------- #
+
+EVO_PATH = os.path.join(HERE, "evo-choices.json")
+EVO_MAX = 2000                       # sessions kept (the oldest picks drop beyond this)
+_evo_lock = threading.Lock()
+_evo_tables_cache = None
+
+
+def evo_tables():
+    """({species: set(final dexes it may become)}, {final dex: set(mega slugs)}),
+    parsed once from ui/app/06-trainer-packs.js."""
+    global _evo_tables_cache
+    if _evo_tables_cache is not None:
+        return _evo_tables_cache
+    finals, megas = {}, {}
+    try:
+        with open(os.path.join(HERE, "ui", "app", "06-trainer-packs.js"), encoding="utf-8") as f:
+            js = f.read()
+
+        def var(name):
+            m = re.search(r"var %s=(.*?);\n" % name, js, re.S)
+            return m.group(1) if m else ""
+        for i, line in enumerate(json.loads(var("POKE_EVO") or "[]")):
+            if isinstance(line, list) and line:
+                finals[i] = {int(line[-1])}
+        for idx, body in re.findall(r"(\d+):\[(\{.*?\})\]", var("POKE_BRANCH")):
+            finals.setdefault(int(idx), set()).update(int(d) for d in re.findall(r"dex:(\d+)", body))
+        for key, body in re.findall(r"(\d+):\[(\{name:.*?\})\]", var("MEGA_FORMS")):
+            megas[int(key)] = set(re.findall(r'slug:"([a-z0-9-]+)"', body))
+    except (OSError, ValueError):
+        pass
+    _evo_tables_cache = (finals, megas)
+    return _evo_tables_cache
+
+
+def clean_evo_choice(sid, entry):
+    """This session's pick, keeping only what is valid for its species:
+    {branchDex?, megaSlug?}; {} when nothing in it is."""
+    if not isinstance(entry, dict) or not (isinstance(sid, str) and _UUID_RE.fullmatch(sid)):
+        return {}
+    finals, megas = evo_tables()
+    allowed = finals.get(_session_hash(sid) % 48, set())
+    out = {}
+    b = entry.get("branchDex")
+    if isinstance(b, int) and not isinstance(b, bool) and b in allowed and len(allowed) > 1:
+        out["branchDex"] = b
+    # a Mega must belong to the chosen final, or (no branch picked) to any final it may become
+    finals_now = [out["branchDex"]] if "branchDex" in out else sorted(allowed)
+    pool = set()
+    for d in finals_now:
+        pool |= megas.get(d, set())
+    m = entry.get("megaSlug")
+    if isinstance(m, str) and m in pool:
+        out["megaSlug"] = m
+    return out
+
+
+def merge_evo_choices(sessions, evo):
+    """Put each session's pick on its creature as `creature.evo` (only where one exists,
+    so every other session's payload is unchanged)."""
+    for s in sessions or []:
+        sid = s.get("sessionId") if isinstance(s, dict) else None
+        if sid in evo and isinstance(s.get("creature"), dict):
+            s["creature"]["evo"] = dict(evo[sid])
+    return sessions
+
+
+def load_evo_choices():
+    """evo-choices.json -> {sessionId: {branchDex?, megaSlug?}} (validated)."""
+    raw = _load_json_guarded(EVO_PATH, {})
+    out = {}
+    if isinstance(raw, dict):
+        for sid, entry in raw.items():
+            e = clean_evo_choice(sid, entry)
+            if e:
+                out[sid] = e
+    return out
+
+
+def save_evo_choice(sid, patch):
+    """Merge a pick into this session's entry (a null field clears it), persist,
+    return the entry. ValueError for a bad session id or a pick that is not
+    valid for this session's Pokemon (nothing is written then)."""
+    if not (isinstance(sid, str) and _UUID_RE.fullmatch(sid)):
+        raise ValueError("invalid sessionId")
+    if not isinstance(patch, dict):
+        raise ValueError("bad pick")
+    with _evo_lock:
+        data = load_evo_choices()
+        cur = dict(data.get(sid, {}))
+        for k in ("branchDex", "megaSlug"):
+            if k in patch:
+                if patch[k] is None:
+                    cur.pop(k, None)
+                else:
+                    cur[k] = patch[k]
+        entry = clean_evo_choice(sid, cur)
+        for k in ("branchDex", "megaSlug"):
+            if patch.get(k) is not None and entry.get(k) != patch.get(k):
+                raise ValueError("%s is not a valid pick for this session's Pokemon" % k)
+        data.pop(sid, None)
+        if entry:
+            data[sid] = entry               # newest last, so a trim keeps it
+        if len(data) > EVO_MAX:
+            data = dict(list(data.items())[-EVO_MAX:])
+        _atomic_write_json(EVO_PATH, data)  # OSError -> caller (HTTP 500)
+        return entry
+
+
+# --------------------------------------------------------------------------- #
 # Local meal ledger (which session ate what; never leaves this machine)
 #
 # Written ONLY by pantry_eat, after the Arena confirmed the snack, and deduped
@@ -5124,7 +5247,7 @@ def music_get(path, raw_path):
 
 POST_PATHS = (
     "/api/update",
-    "/api/action", "/api/config", "/api/meta",
+    "/api/action", "/api/config", "/api/meta", "/api/evo-choice",
     "/api/arena/pair", "/api/arena/unpair",
     "/api/arena/publish", "/api/arena/ticket",
     "/api/arena/nudge",
@@ -6100,6 +6223,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, json.dumps({"error": "bad save: %s" % e}))
             except OSError as e:
                 self._send(500, json.dumps({"error": "could not write save: %s" % e}))
+            return
+
+        if path == "/api/evo-choice":
+            sid = body.get("sessionId")
+            try:
+                entry = save_evo_choice(sid, body)
+            except ValueError as e:
+                self._send(400, json.dumps({"error": str(e)}))
+                return
+            except OSError as e:
+                self._send(500, json.dumps({"error": "could not save the pick: %s" % e}))
+                return
+            _invalidate_payload_memo()            # the next /api/sessions carries it
+            self._send(200, json.dumps({"sessionId": sid, "evo": entry}))
             return
 
         if path == "/api/meta":

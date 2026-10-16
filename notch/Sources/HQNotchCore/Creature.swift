@@ -7,26 +7,32 @@ import Foundation
 /// running, `Creature.local` reproduces `dashboard.py`'s `creature_for()` (sha256 species,
 /// prompt-count stage, per-install salted shiny). The sprite form follows the evolution line
 /// exactly like `pokeDexFor()` in `ui/app/06-trainer-packs.js`, including the hashed
-/// branch default (Eevee/Ralts/Slowpoke). Two browser-only extras are NOT mirrored: manual
-/// branch picks and the per-species high-water floor (both live in the browser's
-/// localStorage), so a session can show an earlier form here than in a browser that has
-/// already seen that species evolve further.
+/// branch default (Eevee/Ralts/Slowpoke). A branch or Mega you picked in HQ comes back from
+/// `/api/sessions` as `creature.evo` (`branchDex`, `megaSlug`) and wins over the default; the
+/// species floor comes from `/api/pokedex` (`floored`).
 public struct Creature: Equatable, Sendable {
     public var species: Int      // 0..47
     public var stage: Int        // 0..4
     public var shiny: Bool
+    /// Picked in HQ (`creature.evo`): the final form to become, and which Mega. Nil = HQ's
+    /// hashed default; a value that is not valid for this species is ignored.
+    public var branchDex: Int?
+    public var megaSlug: String?
 
-    public init(species: Int, stage: Int, shiny: Bool) {
+    public init(species: Int, stage: Int, shiny: Bool, branchDex: Int? = nil, megaSlug: String? = nil) {
         self.species = ((species % 48) + 48) % 48
         self.stage = max(0, min(4, stage))
         self.shiny = shiny
+        self.branchDex = branchDex
+        self.megaSlug = megaSlug
     }
 
     /// HQ's evolution floor: a species never shows an earlier form than the highest stage
     /// any of your sessions reached with it (HQ's `/api/pokedex` `maxStage`, which the
     /// browser also floors live cards to). `floor` maps species index -> stage.
     public func floored(_ floor: [Int: Int]) -> Creature {
-        Creature(species: species, stage: max(stage, floor[species] ?? 0), shiny: shiny)
+        Creature(species: species, stage: max(stage, floor[species] ?? 0), shiny: shiny,
+                 branchDex: branchDex, megaSlug: megaSlug)
     }
 
     /// Parse HQ's `/api/pokedex` into species -> maxStage.
@@ -93,6 +99,7 @@ public struct Creature: Equatable, Sendable {
         let pos = linePosition
         guard pos == line.count - 1 else { return line[pos] }
         if let opts = PokeData.branch[species], !opts.isEmpty {
+            if let b = branchDex, opts.contains(b) { return b }          // picked in HQ
             return opts[Int(Creature.hashStr(sessionId) % UInt32(opts.count))]
         }
         return line[line.count - 1]
@@ -107,6 +114,7 @@ public struct Creature: Equatable, Sendable {
     /// two Megas (Charizard X/Y) the session id picks one, as HQ does by default.
     public func megaForm(sessionId: String, pack: SpritePack) -> MegaForm? {
         guard pack == .threeD, stage >= 4, let fs = PokeData.mega[dex(sessionId: sessionId)], !fs.isEmpty else { return nil }
+        if let m = megaSlug, let f = fs.first(where: { $0.slug == m }) { return f }   // picked in HQ
         return fs.count > 1 ? fs[Int(Creature.hashStr(sessionId) % UInt32(fs.count))] : fs[0]
     }
 
