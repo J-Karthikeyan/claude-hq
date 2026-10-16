@@ -25,7 +25,7 @@ python3 notch/tools/install.py --uninstall
 
 The installer builds with `swift build -c release`, puts `HQ Notch.app` in
 `~/Applications`, copies the hook relay to `~/Library/Application Support/HQNotch/`, and adds
-one hook entry per event to `~/.claude/settings.json`. It backs the file up first
+one hook entry per event (plus the `--ask` question hook) to `~/.claude/settings.json`. It backs the file up first
 (`settings.json.bak-hqnotch-<time>`) and only ever adds or removes entries that point at its
 own relay. New Claude Code sessions report to the notch right away. Sessions already open
 pick the hooks up once they reload their settings.
@@ -48,6 +48,10 @@ Claude Code ──hooks──▶ hq_notch_hook.py ──Unix socket──▶ HQ 
   with a 0.3 s budget. A `PermissionRequest` waits for the notch for up to 115 s, then prints
   nothing, so Claude Code asks in the terminal exactly as it would without the notch. If the
   app isn't running, the socket is gone, or the JSON is bad, the hook prints nothing and exits 0.
+- **Questions are caught twice.** A blocking `PreToolUse` hook matching `AskUserQuestion`
+  (`hq_notch_hook.py --ask`) shows them first; an answer there allows the tool, so no permission
+  step follows. If you send a question to the terminal instead, a `PermissionRequest` for that
+  same question within a minute is passed straight through rather than asked again.
 - **Answers are checked twice.** The relay only forwards an `AskUserQuestion` answer that
   answers exactly the questions asked, with labels from their options (`answers_fit`).
 - **Local only.** The socket lives in a `0700` directory and is `0600`, and the app checks
@@ -79,7 +83,7 @@ python3 notch/tools/gen_pokedata.py          # after changing HQ's evolution lin
 `hqnotch-selftest` stands in for XCTest, which the Command Line Tools don't ship. Debug aids
 for checking the UI without clicking (both off unless the variable is set):
 `HQNOTCH_SNAPSHOT_DIR=<dir>` writes PNGs of the panel's own views (closed, then expanded),
-with no Screen Recording permission needed. `HQNOTCH_DEBUG_REPLY=allow|always|deny|answer`
+with no Screen Recording permission needed. `HQNOTCH_DEBUG_REPLY=allow|always|deny|answer|pass`
 answers each request after 3 s, as a click would. `HQNOTCH_DEBUG_LOG=1` logs the store after
 every hook message.
 

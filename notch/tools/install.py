@@ -42,11 +42,14 @@ EVENTS = ["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostT
           "PostToolUseFailure", "PermissionRequest", "Notification", "Stop", "StopFailure",
           "SubagentStart", "SubagentStop"]
 TIMEOUTS = {"PermissionRequest": 120}
+# Plus one blocking PreToolUse hook just for AskUserQuestion, so questions can be answered
+# from the notch whether or not Claude Code routes them through PermissionRequest.
+ASK_TIMEOUT = 120
 MARKER = "HQNotch/hq_notch_hook.py"
 
 
-def hook_command():
-    return '/usr/bin/python3 "%s"' % HOOK_DST
+def hook_command(*args):
+    return " ".join(['/usr/bin/python3 "%s"' % HOOK_DST, *args])
 
 
 def is_ours(h):
@@ -76,6 +79,8 @@ def merge_hooks(settings, install):
             entry = {"type": "command", "command": hook_command(), "timeout": TIMEOUTS.get(ev, 10)}
             hooks.setdefault(ev, []).append({"matcher": "", "hooks": [entry]} if ev in (
                 "PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest") else {"hooks": [entry]})
+        ask = {"type": "command", "command": hook_command("--ask"), "timeout": ASK_TIMEOUT}
+        hooks["PreToolUse"].append({"matcher": "AskUserQuestion", "hooks": [ask]})
     if hooks:
         s["hooks"] = hooks
     else:
@@ -217,7 +222,10 @@ def do_status():
     print("app:      ", "installed" if os.path.exists(APP) else "missing", "| running" if running else "| not running")
     print("hook:     ", "installed" if os.path.exists(HOOK_DST) else "missing")
     print("login:    ", "yes" if os.path.exists(AGENT) else "no")
+    ask = any(is_ours(h) and "--ask" in h.get("command", "")
+              for g in (s.get("hooks") or {}).get("PreToolUse", []) if isinstance(g, dict) for h in g.get("hooks", []))
     print("hooks in settings.json: %d/%d %s" % (len(ours), len(EVENTS), ",".join(ours)))
+    print("question hook (--ask):", "yes" if ask else "no")
 
 
 def main(argv):

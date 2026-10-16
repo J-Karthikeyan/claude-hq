@@ -6,6 +6,8 @@ Stdlib only. It never blocks Claude Code and never fails it:
   * PermissionRequest waits for the notch's decision (allow / always / deny / answer)
     for at most WAIT_SECS, then prints NOTHING, so Claude Code asks in the terminal
     exactly as it would without the notch;
+  * `--ask` (installed as a PreToolUse hook matching AskUserQuestion) waits the same way
+    for answers to Claude's questions, so they can be answered before any permission step;
   * any error (app not running, bad JSON, socket gone) prints nothing and exits 0.
 
 Privacy: the socket is a local file in ~/Library/Application Support/HQNotch (mode 0600
@@ -115,12 +117,18 @@ def build_message(payload, argv):
         msg["error"] = str(payload.get("error") or "")[:300]
     if event == "SessionStart":
         msg["source"] = str(payload.get("source") or "")
-    if event == "PermissionRequest":
+    if event == "PermissionRequest" or is_ask(payload, argv):
         msg["toolInput"] = _cap(ti if isinstance(ti, (dict, list)) else {})
         sugg = payload.get("permission_suggestions")
-        msg["canAlways"] = bool(isinstance(sugg, list) and sugg)
+        msg["canAlways"] = bool(event == "PermissionRequest" and isinstance(sugg, list) and sugg)
         msg["question"] = tool == "AskUserQuestion"
     return msg
+
+
+def is_ask(payload, argv):
+    """The `--ask` hook: PreToolUse for AskUserQuestion, answered from the notch."""
+    return ("--ask" in argv and payload.get("hook_event_name") == "PreToolUse"
+            and payload.get("tool_name") == "AskUserQuestion")
 
 
 def answers_fit(tool_input, answers):
@@ -153,6 +161,17 @@ def decision_output(reply, payload):
     if not isinstance(reply, dict):
         return None
     decision = reply.get("decision")
+    if payload.get("hook_event_name") == "PreToolUse":
+        # --ask: only an answer is meaningful here. Anything else prints nothing, and the
+        # question goes on to Claude Code's normal flow (terminal, or PermissionRequest).
+        ti = payload.get("tool_input")
+        answers = reply.get("answers")
+        if decision != "answer" or payload.get("tool_name") != "AskUserQuestion" or not answers_fit(ti, answers):
+            return None
+        updated = dict(ti)
+        updated["answers"] = answers
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow",
+                                       "updatedInput": updated}}
     if decision == "answer":
         ti = payload.get("tool_input")
         answers = reply.get("answers")
@@ -207,7 +226,7 @@ def main(argv):
     if not isinstance(payload, dict) or not os.path.exists(SOCKET_PATH):
         return 0
     msg = build_message(payload, argv)
-    blocking = msg["event"] == "PermissionRequest"
+    blocking = msg["event"] == "PermissionRequest" or is_ask(payload, argv)
     msg["wantsReply"] = blocking
     data = (json.dumps(msg, separators=(",", ":")) + "\n").encode("utf-8")
     try:

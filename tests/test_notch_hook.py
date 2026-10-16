@@ -104,6 +104,38 @@ class DecisionTests(unittest.TestCase):
         self.assertIsNone(hook.decision_output({"decision": "answer", "answers": {}}, {"tool_name": "Bash"}))
 
 
+class AskHookTests(unittest.TestCase):
+    """--ask: the PreToolUse hook for AskUserQuestion."""
+    PAYLOAD = {"hook_event_name": "PreToolUse", "session_id": "s", "tool_name": "AskUserQuestion",
+               "tool_input": QUESTION}
+
+    def test_only_blocks_for_ask_flag_on_ask_tool(self):
+        self.assertTrue(hook.is_ask(self.PAYLOAD, ["--ask"]))
+        self.assertFalse(hook.is_ask(self.PAYLOAD, []))                       # generic PreToolUse hook
+        self.assertFalse(hook.is_ask(dict(self.PAYLOAD, tool_name="Bash"), ["--ask"]))
+        self.assertFalse(hook.is_ask(dict(self.PAYLOAD, hook_event_name="PostToolUse"), ["--ask"]))
+
+    def test_message_carries_questions(self):
+        m = hook.build_message(self.PAYLOAD, ["--ask"])
+        self.assertTrue(m["question"])
+        self.assertFalse(m["canAlways"])
+        self.assertEqual(m["toolInput"]["questions"][0]["question"], "Which db?")
+        self.assertNotIn("toolInput", hook.build_message(self.PAYLOAD, []))  # fire-and-forget copy
+
+    def test_answer_is_pretooluse_allow_with_updated_input(self):
+        good = {"Which db?": "Postgres", "Extras?": ["Cache"]}
+        out = hook.decision_output({"decision": "answer", "answers": good}, self.PAYLOAD)
+        h = out["hookSpecificOutput"]
+        self.assertEqual((h["hookEventName"], h["permissionDecision"]), ("PreToolUse", "allow"))
+        self.assertEqual(h["updatedInput"]["answers"], good)
+        self.assertEqual(h["updatedInput"]["questions"], QUESTION["questions"])
+
+    def test_anything_but_a_valid_answer_prints_nothing(self):
+        for reply in ({"decision": "pass"}, {"decision": "allow"}, {"decision": "deny"},
+                      {"decision": "answer", "answers": {"Which db?": "Mongo", "Extras?": ["Cache"]}}, None):
+            self.assertIsNone(hook.decision_output(reply, self.PAYLOAD), reply)
+
+
 class SocketTests(unittest.TestCase):
     """Run the hook as Claude Code does (subprocess, JSON on stdin) against a fake app."""
 
@@ -146,12 +178,12 @@ class SocketTests(unittest.TestCase):
         t.start()
         return t
 
-    def run_hook(self, payload, timeout=10):
+    def run_hook(self, payload, timeout=10, argv=()):
         # Point the module at the temp socket by patching before main runs.
         script = ("import importlib.util,sys\n"
                   "s=importlib.util.spec_from_file_location('h',%r);h=importlib.util.module_from_spec(s);"
                   "s.loader.exec_module(h);h.SOCKET_PATH=%r;h.WAIT_SECS=3\n"
-                  "sys.exit(h.main([]))\n" % (HOOK, self.sock_path))
+                  "sys.exit(h.main(%r))\n" % (HOOK, self.sock_path, list(argv)))
         start = time.time()
         p = subprocess.run([sys.executable, "-c", script], input=json.dumps(payload), capture_output=True,
                            text=True, timeout=timeout)
@@ -185,6 +217,27 @@ class SocketTests(unittest.TestCase):
         self.assertTrue(self.received[0]["wantsReply"])
         out = json.loads(p.stdout)
         self.assertEqual(out["hookSpecificOutput"]["decision"], {"behavior": "allow"})
+
+    def test_ask_round_trip(self):
+        self.reply = {"decision": "answer", "answers": {"Which db?": "SQLite", "Extras?": ["Auth"]}}
+        t = self.serve()
+        p, _ = self.run_hook(dict(AskHookTests.PAYLOAD), argv=["--ask"])
+        t.join(3)
+        self.assertTrue(self.received[0]["wantsReply"])
+        self.assertTrue(self.received[0]["question"])
+        h = json.loads(p.stdout)["hookSpecificOutput"]
+        self.assertEqual(h["permissionDecision"], "allow")
+        self.assertEqual(h["updatedInput"]["answers"]["Which db?"], "SQLite")
+
+    def test_generic_pretooluse_never_waits(self):
+        self.reply = {"decision": "answer", "answers": {}}
+        self.delay = 4
+        t = self.serve()
+        p, secs = self.run_hook(dict(AskHookTests.PAYLOAD))      # no --ask
+        t.join(3)
+        self.assertEqual((p.returncode, p.stdout), (0, ""))
+        self.assertFalse(self.received[0]["wantsReply"])
+        self.assertLess(secs, 2)
 
     def test_app_never_answers_falls_back_to_terminal(self):
         self.reply = None

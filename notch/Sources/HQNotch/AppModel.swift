@@ -54,6 +54,10 @@ final class AppModel: ObservableObject {
     private var salt: String?
     private var pollTask: Task<Void, Never>?
     private var tickTimer: Timer?
+    /// Sessions whose question was just handed to the terminal from the `--ask` hook. If
+    /// Claude Code then routes the same question through PermissionRequest, pass it on
+    /// instead of asking a second time.
+    private var passedQuestion: [String: Date] = [:]
     /// Bumped on every needs-you event so the panel can pop open.
     @Published private(set) var attention = 0
 
@@ -88,6 +92,12 @@ final class AppModel: ObservableObject {
         let fx: [StoreEffect]
         if let id {
             guard approvals else { server.reply(id: id, ["decision": "pass"]); store.apply(m); return }
+            if m.event == "PermissionRequest", m.question == true,
+               let t = passedQuestion.removeValue(forKey: m.sessionId), Date().timeIntervalSince(t) < 60 {
+                server.reply(id: id, ["decision": "pass"])
+                store.apply(m)
+                return
+            }
             fx = store.addPending(id: id, m)
             // Debug aid: answer like a click on the card's button would, to test the socket path.
             if let d = ProcessInfo.processInfo.environment["HQNOTCH_DEBUG_REPLY"],
@@ -95,6 +105,7 @@ final class AppModel: ObservableObject {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                     if d == "allow" { self?.allow(r) } else if d == "always" { self?.allow(r, always: true) }
                     else if d == "deny" { self?.deny(r) }
+                    else if d == "pass" { self?.passToTerminal(r) }
                     else if d == "answer", !r.questions.isEmpty {
                         self?.answer(r, Dictionary(uniqueKeysWithValues: r.questions.map {
                             ($0.text, $0.multiSelect ? [$0.options.first?.label ?? ""] as Any : ($0.options.first?.label ?? "") as Any)
@@ -135,6 +146,7 @@ final class AppModel: ObservableObject {
     func deny(_ r: PendingRequest) { send(r, ["decision": "deny", "message": "Denied from HQ Notch"]) }
     /// Hand the request back to Claude Code's own terminal prompt.
     func passToTerminal(_ r: PendingRequest) {
+        if r.isQuestion { passedQuestion[r.sessionId] = Date() }
         send(r, ["decision": "pass"])
         if let s = store.sessions[r.sessionId] { TerminalJump.focus(s) }
     }
