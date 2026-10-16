@@ -55,13 +55,14 @@ function layout(list){
 HQV.hqCityLayout = layout;
 
 // What stands beside every HQ, in its lot's own frame (the door faces +z, the road is at z 11):
-// a garage in front of the right wing with its door to the road and the HQ's car parked inside
-// it, nose out, and the HQ's bike beside the garage door. You can drive the car and ride the
-// bike (E). Clear of the tower, both wings and the path to the door; see tests/test_hq3d.py.
+// a garage in front of the right wing with its door to the road, and inside it, side by side and
+// all facing out, the HQ's car, its motorbike and its bicycle. Drive or ride any of them (E).
+// Clear of the tower, both wings and the path to the door; see tests/test_hq3d.py.
 var LOT_EXTRAS = {
-  garage: {x: 13.0, z: 6.7, w: 4.6, d: 6.2, h: 3.0},
-  car: {x: 13.0, z: 7.9, yaw: 0, len: 3.6, wid: 1.7},   // forward is +z: nose at the open door
-  bike: {x: 9.8, z: 9.2, yaw: 0}                        // beside the garage door, facing the road
+  garage: {x: 13.0, z: 6.7, w: 7.0, d: 6.2, h: 3.0},
+  car: {x: 14.5, z: 7.9, yaw: 0, len: 3.6, wid: 1.7},   // forward is +z: nose at the open door
+  moto: {x: 12.2, z: 8.2, yaw: 0},
+  bike: {x: 10.8, z: 8.3, yaw: 0}
 };
 HQV.hqLotExtras = LOT_EXTRAS;
 // what you cannot walk (or drive) through, in the lot's frame: the garage's three walls, and
@@ -138,8 +139,8 @@ HQV.hqWorlds.city = function(c, w){
     L.B = B; L.H = B.top() + 2; L.fade = {g: B.g, on: false}; lotsB.push(B);
     lotExtras(L, g, lotColors(h.look));
   }
-  // the garage, car and bike beside an HQ, in its colours (LOT_EXTRAS); the car and the bike
-  // join w.bikes, so hq3d.js lets you drive and ride them
+  // the garage beside an HQ and its car, motorbike and bicycle, in its colours (LOT_EXTRAS); all
+  // three join w.bikes, so hq3d.js lets you drive and ride them
   function lotExtras(L, g, col){
     var X = LOT_EXTRAS, G = X.garage, K = X.car, Bk = X.bike;
     var wallM = mat(col.paint, {roughness: 0.8}), trimM = emis(col.accent, col.accent, 0.35);
@@ -168,13 +169,17 @@ HQV.hqWorlds.city = function(c, w){
     var Cm = c.car(col.accent, col.paint); Cm.g.position.set(K.x, 0, K.z); Cm.g.rotation.y = K.yaw; g.add(Cm.g);
     // under the roof the sun never reaches it: the garage lamp lights its paint (no extra light, so a
     // city of garages costs nothing more to draw)
-    Cm.g.traverse(function(o){ var m = o.material; if(m && m.color && m.emissive && !(m.emissiveIntensity > 0.5)){
-      m.emissive.copy(m.color); m.emissiveIntensity = 0.28; } });
+    function lamplit(gr){ gr.traverse(function(o){ var m = o.material; if(m && m.color && m.emissive && !(m.emissiveIntensity > 0.5)){
+      m.emissive.copy(m.color); m.emissiveIntensity = 0.28; } }); }
+    lamplit(Cm.g);
     var kp = street(K); L.car = {g: Cm.g};
     bikes.push({g: Cm.g, x: kp.x, z: kp.z, yaw: K.yaw + L.rot, color: col.accent, roof: col.paint, kind: "car"});
-    // the HQ's bike beside the garage door
+    // its motorbike and its bicycle beside the car, in the HQ's accent
+    var Mo = X.moto, Mm = c.moto(col.accent); Mm.g.position.set(Mo.x, 0, Mo.z); Mm.g.rotation.y = Mo.yaw; g.add(Mm.g);
+    var mp = street(Mo);
+    lamplit(Mm.g); bikes.push({g: Mm.g, x: mp.x, z: mp.z, yaw: Mo.yaw + L.rot, color: col.accent, kind: "moto"});
     var Bm = c.bike(col.accent); Bm.g.position.set(Bk.x, 0, Bk.z); Bm.g.rotation.y = Bk.yaw; g.add(Bm.g);
-    var bp = street(Bk);
+    var bp = street(Bk); lamplit(Bm.g);
     bikes.push({g: Bm.g, x: bp.x, z: bp.z, yaw: Bk.yaw + L.rot, color: col.accent});
   }
   // one tab's building (games/hqbase.js): its door opens that tab

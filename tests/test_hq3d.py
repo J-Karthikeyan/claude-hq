@@ -222,7 +222,9 @@ const X = window.HQV.hqLotExtras, blocked = window.HQV.hqLotExtraBlocked, colors
 const bld = (x, z) => (Math.abs(x) < 4.8 && Math.abs(z) < 3.8) || (Math.abs(x + 10.5) < 3.0 && Math.abs(z - 0.5) < 2.8)
   || (Math.abs(x - 10.5) < 3.0 && Math.abs(z - 0.5) < 2.8);
 const pts = (cx, cz, hw, hd) => { const o = []; for (let i = 0; i <= 10; i++) for (let j = 0; j <= 10; j++) o.push([cx - hw + 2*hw*i/10, cz - hd + 2*hd*j/10]); return o; };
-const G = X.garage, K = X.car, B = X.bike;
+const G = X.garage, K = X.car, B = X.bike, M = X.moto;
+const inGarage = v => Math.abs(v.x - G.x) < G.w/2 - 0.4 && v.z > G.z - G.d/2 + 0.4 && v.z < G.z + G.d/2;
+const laneOut = v => pts(v.x, (v.z + 11)/2, 0.35, (11 - v.z)/2).every(p => !blocked(p[0], p[1]));
 const garage = pts(G.x, G.z, G.w/2, G.d/2);
 const path = pts(0, 7.4, 1.5, 3.4);                       // the door (z 4.8) to the road (z 11)
 // the lane the car drives out along, its full width, from where it is parked to the road
@@ -236,7 +238,10 @@ console.log(JSON.stringify({
   carInside: Math.abs(K.x - G.x) + K.wid/2 < G.w/2 - 0.2 && K.z - K.len/2 > G.z - G.d/2 + 0.2 && K.z + K.len/2 < G.z + G.d/2,
   carParkedSolid: blocked(K.x, K.z) && blocked(K.x, K.z, true),
   driveOut: lane.every(p => !blocked(p[0], p[1], false)),
-  bikeFree: !blocked(B.x, B.z) && Math.abs(B.x) < 17 && B.z < 11 && !(Math.abs(B.x - G.x) < G.w/2 + 0.3 && B.z < G.z + G.d/2),
+  bikeFree: !blocked(B.x, B.z) && !blocked(M.x, M.z) && inGarage(B) && inGarage(M),     // both parked inside
+  bikesOut: laneOut(B) && laneOut(M),                                                // and ride straight out
+  walkBetween: !blocked((M.x + K.x - K.wid/2)/2, K.z) && (K.x - K.wid/2) - (M.x + 0.35) > 0.8,   // room beside the car
+  threeApart: Math.abs(B.x - M.x) > 1.0 && Math.abs(M.x - K.x) > 1.6,
   cols: colors({paint: '#112233', accent: '#ABCDEF'}), dflt: colors({paint: 'red', accent: '#12'}), none: colors(null)
 }));
 """
@@ -253,7 +258,7 @@ class ArenaCity(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         got = json.loads(r.stdout)
         for k in ("clearOfBuilding", "onTheBlock", "pathFree", "wallsSolid", "doorOpen", "carInside",
-                  "carParkedSolid", "driveOut", "bikeFree"):
+                  "carParkedSolid", "driveOut", "bikeFree", "bikesOut", "walkBetween", "threeApart"):
             self.assertTrue(got[k], k)
         self.assertEqual(got["cols"], {"paint": 0x112233, "accent": 0xABCDEF})
         self.assertEqual(got["dflt"], {"paint": 0x2a3c50, "accent": 0xffb347})   # same fallbacks as the building
@@ -262,10 +267,13 @@ class ArenaCity(unittest.TestCase):
         self.assertIn('lotExtras(L, g, lotColors(h.look));', city)                # on every HQ lot
         self.assertIn('bikes.push({g: Bm.g,', city)                               # its bike is ridable
         self.assertIn('kind: "car"});', city)                                     # and its car drivable
+        self.assertIn('kind: "moto"});', city)                                    # and its motorbike ridable
         self.assertIn('lotExtraBlocked(lx, lz, !L.car || L.car.g.visible)', city) # the parked car blocks; the driven one does not
         src = open(os.path.join(ROOT, "games", "hq3d.js"), encoding="utf-8").read()
-        self.assertIn('var car = b.kind === "car", B = car ? carModel(b.color, b.roof) : bikeModel(b.color);', src)
+        self.assertIn('var B = car ? carModel(b.color, b.roof) : kind === "moto" ? motoModel(b.color) : bikeModel(b.color);', src)
         self.assertIn('(!nose || !blocked(nx + sy*nose, nz + cy*nose))', src)    # the bumper stops at walls
+        self.assertIn('var V = ride.V, top = V.sprint && (keys.ShiftLeft || keys.ShiftRight) ? V.sprint : V.top;', src)  # Shift only pedals a bicycle harder
+        self.assertIn('if(V.motor && keys.Space)', src)                          # motor vehicles: Space is the handbrake
 
     def test_layout(self):
         r = subprocess.run(["node", "-e", CITY, os.path.join(ROOT, "games", "hqbase.js"), os.path.join(ROOT, "games", "hqcity.js")],

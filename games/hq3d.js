@@ -228,6 +228,40 @@ function mount(el, api){
     C.wheels.forEach(function(w){ w.rotation.x += d/CAR_WR; });
     if(st != null) C.steer.forEach(function(h){ h.rotation.y = st*0.5; });
   }
+  // A motorbike: forward is +z, wheels on the ground. {g, wheels: [rear, front], steer}.
+  var MOTO_WR = 0.34, MOTO_WB = 1.42;
+  function motoModel(color){
+    var g = new THREE.Group(), WR = MOTO_WR, WB = MOTO_WB;
+    var paint = mat(color, {metalness: 0.6, roughness: 0.28}), dark = mat(0x15191e, {roughness: 0.6}), steel = mat(0xc4ccd4, {metalness: 0.85, roughness: 0.25});
+    function wheel(p, z, y){
+      var w = new THREE.Group(); w.position.set(0, y, z); p.add(w);
+      var tyre = new THREE.Mesh(new THREE.TorusGeometry(WR - 0.07, 0.085, 10, 28), dark); tyre.rotation.y = PI/2; tyre.castShadow = true; w.add(tyre);
+      var disc = new THREE.Mesh(new THREE.CylinderGeometry(WR - 0.12, WR - 0.12, 0.05, 20), steel); disc.rotation.z = PI/2; w.add(disc);
+      return w;
+    }
+    var rear = wheel(g, -WB/2, WR);
+    box(0.3, 0.32, 0.62, steel, 0, 0.5, -0.05, g);                                   // the engine
+    box(0.12, 0.12, 0.7, steel, 0.2, 0.36, -0.45, g);                                // the exhaust
+    var tank = box(0.42, 0.26, 0.62, paint, 0, 0.86, 0.2, g);                        // the tank, in the HQ's colour
+    box(0.34, 0.1, 0.62, dark, 0, 0.8, -0.38, g);                                    // the seat
+    box(0.3, 0.16, 0.5, paint, 0, 0.74, -0.72, g);                                   // the tail
+    box(0.06, 0.06, 0.9, steel, 0, 0.58, -0.35, g);                                  // the swingarm
+    // the steering: forks, front wheel, bars and headlight turn about the head
+    var steer = new THREE.Group(); steer.position.set(0, 0.98, 0.5); g.add(steer);
+    var front = wheel(steer, WB/2 - 0.5, WR - 0.98);
+    [-0.1, 0.1].forEach(function(x){ var f = box(0.05, 0.75, 0.05, steel, x, -0.33, 0.1, steer); f.rotation.x = -0.35; });
+    box(0.7, 0.04, 0.04, steel, 0, 0.12, -0.06, steer);                              // the bars
+    [-0.33, 0.33].forEach(function(x){ box(0.05, 0.05, 0.12, dark, x, 0.12, -0.06, steer); });
+    box(0.22, 0.18, 0.12, paint, 0, 0, 0.12, steer);                                 // the headlight cowl
+    box(0.14, 0.1, 0.03, emis(0xfff6e0, 0xfff1c8, 1.4), 0, 0, 0.19, steer, true);
+    box(0.12, 0.06, 0.03, emis(0x5a0d12, 0xff3344, 0.9), 0, 0.78, -0.98, g, true);  // the tail light
+    return {g: g, wheels: [rear, front], steer: steer};
+  }
+  function motoRoll(M, d, st){
+    if(!M) return;
+    M.wheels[0].rotation.x += d/MOTO_WR; M.wheels[1].rotation.x += d/MOTO_WR;
+    if(st != null) M.steer.rotation.y = st*0.4;
+  }
   function bikeColor(key){ return [0xff6b5b, 0x5fd3e6, 0xffb347, 0x6fd38a, 0x9b8cf0, 0xf4f4f4, 0xe0559b, 0x3d6fd1][hashStr(key) % 8]; }
 
   // What a floor of the building (games/hqlobby.js, games/hqbase.js) builds with.
@@ -240,7 +274,7 @@ function mount(el, api){
     glow: function(c, sz, op){ return glowSprite(c, sz, op); }, label: function(t, c, sc){ return label(t, c, sc); }, glyph: function(ch, c){ return glyph(ch, c); },
     plant: function(x, z, sc, seed){ return plant(x, z, sc, seed); }, sky: function(day){ return day ? sky.day : sky.night; },
     bike: function(col){ return bikeModel(col); }, bikeRoll: function(B, d, st){ bikeRoll(B, d, st); }, bikeColor: bikeColor,
-    car: function(body, roof){ return carModel(body, roof); },
+    car: function(body, roof){ return carModel(body, roof); }, moto: function(col){ return motoModel(col); },
     rng: rng, hashStr: hashStr, short: short, rr: rr, crewState: crewState,
     character: function(key, cb){ makeCharacter(key, cb); }, anim: function(ch, n, sp){ setAnim(ch, n, sp); },
     avatar: function(){ return avatar ? {x: avatar.x, z: avatar.z} : null; },
@@ -663,10 +697,18 @@ function mount(el, api){
     if(doorsArmed && nd < 1.5){ doorsArmed = false; walkTo = null; through(near); }
   }
   /* ---------- riding a bike or driving a car (Arena City: cur.bikes) ---------- */
-  // cur.bikes lists what you can get on: {g, x, z, yaw, color, kind: "car" (else a bike), roof}.
-  // ride = {idx, B (the bike or car under you), lean (group you and it sit in), speed, steer, car}.
+  // cur.bikes lists what you can get on: {g, x, z, yaw, color, kind: "car" | "moto" (else a bicycle), roof}.
+  // ride = {idx, B (what is under you), lean (group you and it sit in), speed, steer, kind, V (VEHICLES[kind]), car}.
   // Getting off puts it back where it was parked: parked ones are this page's own props, not shared.
-  var ride = null, RIDE_MAX = 10, RIDE_BOOST = 14, CAR_MAX = 14, CAR_BOOST = 20, CAR_NOSE = 1.9;
+  // How each one handles (m/s, m/s²). A bicycle sprints while you hold Shift; a motorbike or a car
+  // has an accelerator instead: hold W and it keeps gathering speed up to its top, S brakes then
+  // reverses, Space is the handbrake.
+  var VEHICLES = {
+    bike: {top: 10, sprint: 14, acc: 7, rev: 2.5, lean: 0.32, nose: 0},
+    moto: {top: 24, acc: 9, rev: 3, lean: 0.42, nose: 0.8, motor: true},
+    car:  {top: 22, acc: 6, rev: 5, lean: 0, nose: 1.9, motor: true}
+  };
+  var ride = null;
   function nearBike(){
     var bs = cur && cur.bikes; if(!bs || !avatar) return -1;
     var best = -1, bd = 1e9;
@@ -678,6 +720,11 @@ function mount(el, api){
       }
       if(d < 1.7 && d < bd){ bd = d; best = i; } });
     return best;
+  }
+  function seatMoto(ch, on){
+    if(!ch) return;
+    if(on){ ch.o.position.set(0, 0.36, -0.32); ch.o.rotation.set(0.18, 0, 0); setAnim(ch, "sit", 1); }   // leaning on the tank
+    else { ch.o.position.set(0, 0, 0); ch.o.rotation.set(0, 0, 0); setAnim(ch, "idle"); }
   }
   function seatDriver(ch, on){
     if(!ch) return;
@@ -692,14 +739,15 @@ function mount(el, api){
   function mount(i){
     var b = cur.bikes && cur.bikes[i]; if(!b || ride) return;
     var lean = new THREE.Group(); avatar.g.add(lean);
-    var car = b.kind === "car", B = car ? carModel(b.color, b.roof) : bikeModel(b.color); lean.add(B.g);
-    if(avatar.ch){ lean.add(avatar.ch.o); (car ? seatDriver : seatRider)(avatar.ch, true); }
+    var kind = VEHICLES[b.kind] ? b.kind : "bike", car = kind === "car";
+    var B = car ? carModel(b.color, b.roof) : kind === "moto" ? motoModel(b.color) : bikeModel(b.color); lean.add(B.g);
+    if(avatar.ch){ lean.add(avatar.ch.o); (car ? seatDriver : kind === "moto" ? seatMoto : seatRider)(avatar.ch, true); }
     b.g.visible = false;
     avatar.airborne = false; avatar.vy = 0; avatar.g.position.y = 0;   // getting on mid-hop lands you on the seat
     if(car){ avatar.x = b.x; avatar.z = b.z; }                        // in the driver's seat, where it is parked
-    ride = {idx: i, B: B, lean: lean, speed: 0, steer: 0, car: car};
+    ride = {idx: i, B: B, lean: lean, speed: 0, steer: 0, kind: kind, V: VEHICLES[kind], car: car};
     avatar.yaw = b.yaw; walkTo = null; walkDoor = null;
-    E.sfx(car ? "door" : "bell");
+    E.sfx(kind === "bike" ? "bell" : kind === "car" ? "door" : "go");
     rideUiSync(true);
   }
   function dismount(){
@@ -723,23 +771,26 @@ function mount(el, api){
   function rideMove(dt){
     var thr = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
     var st = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
-    var boost = keys.ShiftLeft || keys.ShiftRight, top = ride.car ? (boost ? CAR_BOOST : CAR_MAX) : (boost ? RIDE_BOOST : RIDE_MAX);
+    var V = ride.V, top = V.sprint && (keys.ShiftLeft || keys.ShiftRight) ? V.sprint : V.top;
     walkTo = null; walkDoor = null;
-    if(thr > 0) ride.speed = Math.min(top, ride.speed + (ride.speed < 0 ? 14 : 7)*dt);
-    else if(thr < 0) ride.speed = Math.max(-2.5, ride.speed - (ride.speed > 0 ? 14 : 4)*dt);
-    else ride.speed = ride.speed > 0 ? Math.max(0, ride.speed - 2*dt) : Math.min(0, ride.speed + 4*dt);
+    // an engine pulls hardest from a standstill and less as it nears its top speed
+    var pull = V.motor ? V.acc*Math.max(0.25, 1 - Math.max(0, ride.speed)/top) : V.acc;
+    if(V.motor && keys.Space) ride.speed = ride.speed > 0 ? Math.max(0, ride.speed - 24*dt) : Math.min(0, ride.speed + 24*dt);   // handbrake
+    else if(thr > 0) ride.speed = Math.min(top, ride.speed + (ride.speed < 0 ? 14 : pull)*dt);
+    else if(thr < 0) ride.speed = Math.max(-V.rev, ride.speed - (ride.speed > 0 ? 14 : 4)*dt);
+    else ride.speed = ride.speed > 0 ? Math.max(0, ride.speed - (V.motor ? 3 : 2)*dt) : Math.min(0, ride.speed + 4*dt);
     if(ride.speed > top) ride.speed = Math.max(top, ride.speed - 6*dt);
     ride.steer += (st - ride.steer)*Math.min(1, dt*6);
     var grip = Math.min(1, Math.abs(ride.speed)/2.5);
     avatar.yaw += ride.steer*grip*(ride.speed >= 0 ? 1.9 : -1.2)*dt;
     var d = ride.speed*dt, sy = Math.sin(avatar.yaw), cy = Math.cos(avatar.yaw), nx = avatar.x + sy*d, nz = avatar.z + cy*d;
     // a car checks its bumper too (the end it is moving towards), so its nose stops at a wall
-    var nose = ride.car ? (d >= 0 ? CAR_NOSE : -CAR_NOSE) : 0;
+    var nose = d >= 0 ? V.nose : -V.nose;
     if(d && !blocked(nx, nz) && (!nose || !blocked(nx + sy*nose, nz + cy*nose))){ avatar.x = nx; avatar.z = nz; }
     else if(d){ ride.speed *= -0.2; d = 0; }
-    if(ride.car) carRoll(ride.B, d, ride.steer); else bikeRoll(ride.B, d, ride.steer);
+    (ride.kind === "car" ? carRoll : ride.kind === "moto" ? motoRoll : bikeRoll)(ride.B, d, ride.steer);
     // lean into the turn (and sit up straight in Calm); a car does not lean
-    var lean = E.calm() || ride.car ? 0 : -ride.steer*Math.min(1, Math.abs(ride.speed)/6)*0.32;
+    var lean = E.calm() ? 0 : -ride.steer*Math.min(1, Math.abs(ride.speed)/6)*V.lean;
     ride.lean.rotation.z += (lean - ride.lean.rotation.z)*Math.min(1, dt*8);
     if(avatar.ch) setAnim(avatar.ch, "sit", 1);
     keyMove = Math.abs(ride.speed) > 0.3; keyRun = false; if(keyMove){ movedHere = true; walkInto(); }
@@ -751,18 +802,24 @@ function mount(el, api){
   function rideUiSync(force){
     if(!rideUi) return;
     var near = ride ? -2 : nearBike(), nb = near >= 0 && cur && cur.bikes ? cur.bikes[near] : null;
-    var key = ride ? "on" : nb ? (nb.kind === "car" ? "near-car" : "near") : "";
+    var key = ride ? "on" : nb ? "near-" + (nb.kind || "bike") : "";
     if(!force && key === rideUi.dataset.k) return;
     rideUi.dataset.k = key; rideUi.hidden = !key;
-    var car = ride ? ride.car : !!(nb && nb.kind === "car");
-    rideUi.textContent = ride ? (car ? "Get out (E)" : "Get off (E)") : (car ? "\uD83D\uDE97 Drive (E)" : "\uD83D\uDEB2 Ride (E)");
-    rideUi.title = ride ? (car ? "W / S: drive and brake · A / D: steer · Shift: faster · E: get out" : "W / S: pedal and brake · A / D: steer · Shift: faster · E: get off")
-      : (car ? "Get in this car" : "Get on this bike");
+    var kind = ride ? ride.kind : (nb && VEHICLES[nb.kind] ? nb.kind : "bike");
+    rideUi.textContent = ride ? (kind === "car" ? "Get out (E)" : "Get off (E)")
+      : kind === "car" ? "\uD83D\uDE97 Drive (E)" : kind === "moto" ? "\uD83C\uDFCD\uFE0F Ride (E)" : "\uD83D\uDEB2 Ride (E)";
+    rideUi.title = ride ? RIDE_HELP[kind] : kind === "car" ? "Get in this car" : kind === "moto" ? "Get on this motorbike" : "Get on this bike";
     if(key === "on" && force) tipRide();
   }
-  function tipRide(){ if(api.announce) api.announce(ride && ride.car
-    ? "In the car. W and S drive and brake, A and D steer, Shift goes faster, E gets out."
-    : "On the bike. W and S pedal and brake, A and D steer, Shift goes faster, E gets off."); }
+  var RIDE_HELP = {
+    bike: "W / S: pedal and brake · A / D: steer · Shift: pedal harder · E: get off",
+    moto: "W: throttle (hold it to keep speeding up) · S: brake, then reverse · A / D: steer · Space: handbrake · E: get off",
+    car: "W: accelerator (hold it to keep speeding up) · S: brake, then reverse · A / D: steer · Space: handbrake · E: get out"
+  };
+  function tipRide(){ if(!api.announce || !ride) return;
+    api.announce(ride.kind === "car" ? "In the car. Hold W to accelerate, S brakes and reverses, A and D steer, Space is the handbrake, E gets out."
+      : ride.kind === "moto" ? "On the motorbike. Hold W for throttle, S brakes, A and D steer, Space is the handbrake, E gets off."
+      : "On the bike. W and S pedal and brake, A and D steer, Shift pedals harder, E gets off."); }
   function rideToggle(){ if(ride) dismount(); else { var i = nearBike(); if(i >= 0) mount(i); } }
 
   function moveAvatar(dt){
