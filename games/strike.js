@@ -2845,7 +2845,9 @@ function makeGame(host, opts){
     V.alive = false;
     if(raf) cancelAnimationFrame(raf); raf = 0;
     window.removeEventListener("resize", onResize); if(ro) ro.disconnect();
-    window.removeEventListener("keydown", onTab, true); window.removeEventListener("keyup", onTab, true);
+    // (no window key listeners here — strike's keys live in HQV.input.create, cleaned up
+    // below; the removeEventListener pair fps.js needs used to be pasted in by mistake and
+    // threw "onTab is not defined" on every destroy, which the hub showed as a mount error)
     if(IN){ IN.destroy(); IN = null; }
     if(R3){ R3.dispose(); R3 = null; }
     root.remove();
@@ -2876,6 +2878,9 @@ function makeGame(host, opts){
   V.weapon = function(w){ switchTo(w, now()); };
   V.place = function(x, y, z){ placeMe(x, y, z, null); };
   V.showBoard = function(on){ V.board = !!on; renderBoard(); };
+  // the lobby handler calls this on every lobby view change (host flip, someone joins)
+  // so the menu no longer freezes at mount time on "waiting for the host"
+  V.rerenderMenu = renderMenu;
   return V;
 }
 
@@ -2890,7 +2895,9 @@ if(MP){
   MP.handlers.strike = {
     on: function(m){ if(CUR && CUR.ctx) CUR.onEvent(m); },
     onError: function(m){ return CUR && CUR.ctx ? CUR.onError(m) : false; },
-    render: function(){}
+    // a lobby event (host flip, a join, a leave) may change who's allowed to press
+    // "Start the match"; repaint the menu so it stops saying "waiting for the host"
+    render: function(){ if(CUR && CUR.rerenderMenu && CUR.mode === "mp") CUR.rerenderMenu(); }
   };
   MP.register("strike", "💀", "Team shootout for up to 8 (X vs X, bots fill in): the server judges every shot", function(ctx){
     if(CUR) CUR.destroy();
