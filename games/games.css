@@ -24,6 +24,9 @@
 .vg-muted{color:var(--muted);font-size:13px}
 .vg-msg{margin:0;font-weight:600;min-height:1.3em}
 .vg-select{height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);font:inherit}
+/* a clamped number field (match length / target): the select's look, spinners kept for
+   mouse users; width fits up to 3 digits so it sits in a row with the selects */
+.vg-fps-num{width:64px;padding:0 6px;-moz-appearance:textfield}
 .vg-canvas{display:block;width:100%;max-width:720px;height:auto;image-rendering:pixelated;border-radius:var(--radius-sm);
   border:1px solid var(--line);background:var(--bg2);outline-offset:3px}
 .vg-canvas:focus-visible{outline:2px solid var(--brand)}
@@ -408,6 +411,20 @@ html.hq-calm .vg-plat-cd,html.hq-calm .vg-plat-fade{animation:none}
 .vg-fps-hurt.on{opacity:.9}
 .vg-fps-vig{position:absolute;inset:0;box-shadow:inset 0 0 70px 10px var(--need);opacity:0;transition:opacity .2s}
 .vg-fps-vig.on{opacity:.55}
+/* your own drop shield, seen from the inside: the rim colour is set from JS
+   (SHIELD_COLOR — the same constant the 3D bubble uses) so games.css stays hex-free */
+.vg-fps-shield-ov{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .25s;
+  box-shadow:inset 0 0 70px 14px var(--fps-shield-rim),inset 0 0 18px 4px var(--fps-shield-rim)}
+.vg-fps-shield-ov.on{opacity:1}
+.vg-fps-shld{position:absolute;left:50%;bottom:58px;transform:translateX(-50%);display:flex;align-items:center;gap:6px;
+  padding:3px 10px;border-radius:999px;font:700 12px var(--mono);color:var(--ink);
+  background:color-mix(in srgb,var(--panel) 88%,transparent);border:1px solid var(--line)}
+/* cloaked (unseen by enemy bots): grey rim from JS (TOTEMS.cloak.hue), hex-free here */
+.vg-fps-cloak-ov{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .25s;
+  box-shadow:inset 0 0 70px 14px var(--fps-cloak-rim),inset 0 0 18px 4px var(--fps-cloak-rim)}
+.vg-fps-cloak .vg-fps-cloak-ov{opacity:1}
+.vg-fps-shld i{display:block;width:90px;height:8px;border-radius:4px;background:var(--panel2);border:1px solid var(--line);overflow:hidden}
+.vg-fps-shld b{display:block;height:100%;width:100%;background:var(--fps-shield)}
 .vg-fps-hp,.vg-fps-ammo,.vg-fps-top{position:absolute;padding:6px 10px;border-radius:8px;background:color-mix(in srgb,var(--panel) 88%,transparent);
   border:1px solid var(--line);color:var(--ink)}
 .vg-fps-hp{left:10px;bottom:10px;width:170px;display:flex;align-items:center;gap:8px}
@@ -427,16 +444,72 @@ html.hq-calm .vg-plat-cd,html.hq-calm .vg-plat-fade{animation:none}
 .vg-fps-center{position:absolute;left:50%;top:32%;transform:translate(-50%,-50%);padding:6px 22px;border-radius:var(--radius);
   font:800 32px var(--mono);color:var(--ink);background:var(--panel);border:2px solid var(--brand);box-shadow:var(--shadow-lg);white-space:nowrap}
 .vg-fps-board{z-index:3}
+/* the weapon wheel (hold Tab): four quarter wedges around a label; no animation under Calm / reduced-motion */
+.vg-fps-wheel{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;pointer-events:none;z-index:2;
+  background:color-mix(in srgb,var(--bg2) 45%,transparent)}
+.vg-fps-wheel-ring{position:relative;width:min(52%,280px);aspect-ratio:1;border-radius:50%;border:1px solid var(--line);overflow:hidden;
+  background:color-mix(in srgb,var(--panel) 70%,transparent)}
+/* each seg is a 50%×50% square pivoted at the ring's center; the ring's border-radius clips
+   it into a quarter sector, and the four rotated squares tile the full disk with no gaps.
+   seg 0 is centered on UP, then clockwise — matching the JS steering (atan2(x, -y), 0 = up):
+   an unrotated square covers the bottom-right quadrant, so up is rotate(225deg) */
+.vg-fps-wheel-seg{position:absolute;left:50%;top:50%;width:50%;height:50%;transform-origin:0 0;
+  background:color-mix(in srgb,var(--panel) 82%,transparent);transition:background-color .12s;border:1px solid var(--line)}
+.vg-fps-wheel-seg:nth-child(1){transform:rotate(225deg)}
+.vg-fps-wheel-seg:nth-child(2){transform:rotate(315deg)}
+.vg-fps-wheel-seg:nth-child(3){transform:rotate(45deg)}
+.vg-fps-wheel-seg:nth-child(4){transform:rotate(135deg)}
+/* the seg squares rotate, so their content counter-rotates around the seg's own
+   centre to stay upright while sitting at the wedge's mid-radius */
+.vg-fps-wheel-cnt{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--ink)}
+.vg-fps-wheel-seg:nth-child(1) .vg-fps-wheel-cnt{transform:rotate(-225deg)}
+.vg-fps-wheel-seg:nth-child(2) .vg-fps-wheel-cnt{transform:rotate(-315deg)}
+.vg-fps-wheel-seg:nth-child(3) .vg-fps-wheel-cnt{transform:rotate(-45deg)}
+.vg-fps-wheel-seg:nth-child(4) .vg-fps-wheel-cnt{transform:rotate(-135deg)}
+.vg-fps-wheel-seg.sel{background:color-mix(in srgb,var(--acc) 30%,var(--panel))}
+.vg-fps-wheel-seg.cur{box-shadow:inset 0 0 0 2px var(--acc)}
+.vg-fps-wheel-seg.off{opacity:.28}
+.vg-fps-wheel-ic{font-size:clamp(20px,4vmin,30px);line-height:1}
+.vg-fps-wheel-seg b{font-size:12px;font-weight:600;max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}
+.vg-fps-wheel-seg i{font-style:normal;font-size:11px;font-variant-numeric:tabular-nums;color:var(--muted)}
+.vg-fps-wheel-lab{min-height:1.2em;font-size:13px;font-weight:600;color:var(--ink);background:color-mix(in srgb,var(--panel) 88%,transparent);border:1px solid var(--line);
+  padding:3px 10px;border-radius:8px}
+html.hq-calm .vg-fps-wheel-seg{transition:none}
+@media (prefers-reduced-motion:reduce){ .vg-fps-wheel-seg{transition:none} }
+.vg-fps-stam{position:absolute;left:50%;bottom:46px;transform:translateX(-50%);width:150px;height:6px;border-radius:3px;
+  background:color-mix(in srgb,var(--panel) 88%,transparent);border:1px solid var(--line);overflow:hidden}
+.vg-fps-stam i{display:block;height:100%;width:100%;background:var(--good);transition:width .1s}
+.vg-fps-stam.low i{background:var(--need);animation:hq-fps-stam .5s ease-in-out infinite alternate}
+@keyframes hq-fps-stam{from{opacity:1}to{opacity:.25}}
+html.hq-calm .vg-fps-stam.low i{animation:none}
+@media (prefers-reduced-motion:reduce){ .vg-fps-stam.low i{animation:none} }
 .vg-fps-pause{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:16px;text-align:center;
   background:color-mix(in srgb,var(--bg2) 55%,transparent);color:var(--ink);cursor:pointer;z-index:2}
 .vg-fps-pause b{font-size:22px}
 .vg-fps-pause span{max-width:420px;font-size:13px;padding:6px 10px;border-radius:8px;background:var(--panel);border:1px solid var(--line)}
 .vg-fps-sw{display:inline-block;width:18px;height:18px;border-radius:50%;border:1px solid var(--line)}
+/* strike: the pre-game welcome card — what the match is, the arsenal, the drops, the keys */
+.vg-sz-card{border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);padding:14px 16px;display:flex;flex-direction:column;gap:12px;margin:4px 0 10px;max-width:760px}
+.vg-sz-kick{margin:0;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--brand);font-weight:700}
+.vg-sz-h{margin:-6px 0 0;font-size:20px;line-height:1.2}
+.vg-sz-sec{display:flex;flex-direction:column;gap:7px;border-top:1px solid var(--line);padding-top:10px}
+.vg-sz-lin{display:flex;align-items:baseline;gap:8px;font-size:13px;line-height:1.45}
+.vg-sz-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:7px}
+.vg-sz-pill{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:calc(var(--radius) - 2px);background:var(--panel2);padding:6px 8px;min-width:0}
+.vg-sz-pn{display:flex;flex-direction:column;gap:1px;min-width:0}
+.vg-sz-pn span{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vg-sz-pn small{font-size:10.5px;line-height:1.35}
+.vg-sz-gem{flex:none;width:14px;height:14px;transform:rotate(45deg);border-radius:3px}
+.vg-sz-ic{flex:none;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-style:normal}
+.vg-sz-wic{flex:none;width:22px;text-align:center;font-size:16px;line-height:1}
+.vg-sz-keys{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;font-size:13px;color:var(--muted)}
+.vg-sz-key{display:flex;align-items:center;gap:6px}
+.vg-sz-key kbd{font-family:var(--mono);font-size:11px;padding:2px 6px;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;background:var(--panel2);color:var(--fg)}
 .vg-fps-dead .vg-fps-canvas{filter:grayscale(.7)}
 .vg-fps-dead .vg-fps-cross{display:none}
-html.hq-calm .vg-fps-hitm,html.hq-calm .vg-fps-hurt,html.hq-calm .vg-fps-vig{transition:none}
+html.hq-calm .vg-fps-hitm,html.hq-calm .vg-fps-hurt,html.hq-calm .vg-fps-vig,html.hq-calm .vg-fps-shield-ov,html.hq-calm .vg-fps-cloak-ov{transition:none}
 html.hq-calm .vg-fps-vig{display:none}
-@media (prefers-reduced-motion:reduce){ .vg-fps-hitm,.vg-fps-hurt,.vg-fps-vig{transition:none} .vg-fps-vig{display:none} }
+@media (prefers-reduced-motion:reduce){ .vg-fps-hitm,.vg-fps-hurt,.vg-fps-vig,.vg-fps-shield-ov,.vg-fps-cloak-ov{transition:none} .vg-fps-vig{display:none} }
 @media (max-width:560px){ .vg-fps-hp{width:120px} .vg-fps-hpt{width:60px} .vg-fps-ammo{min-width:100px} .vg-fps-feed{display:none} }
 
 /* HQ 2.5 Track Editor (games/trackedit.js) */
@@ -549,3 +622,50 @@ html.hq-calm .bowl-flash.on{opacity:1}
 .bowl-b.sp{color:var(--brand)}
 .bowl-cum{font-weight:800;min-height:18px}
 .bowl-tot{font-weight:900}
+/* scoped in: sight pictures per weapon (spread itself is unchanged — these are just sights).
+   SMG red-dot: a donut + center tick, exactly the holographic reticle in your reference. The
+   <i> inside .vg-fps-cross is the ring, <b> is the dot (both already in the markup). */
+.vg-fps-cross.ads{width:0;height:0;background:none;box-shadow:none}
+.vg-fps-cross.ads::before,.vg-fps-cross.ads::after{content:none}
+.vg-fps-cross.ads i{position:absolute;left:50%;top:50%;width:20px;height:20px;transform:translate(-50%,-50%);
+  border:2px solid var(--need);border-radius:50%;
+  box-shadow:0 0 6px 1px color-mix(in srgb, var(--need) 60%, transparent)}
+.vg-fps-cross.ads b{position:absolute;left:50%;top:50%;width:4px;height:4px;transform:translate(-50%,-50%);
+  background:var(--need);border-radius:50%;box-shadow:0 0 4px 1px var(--need)}
+/* sniper: black hairlines crossing edge to edge, a small red tick exactly where they meet.
+   ::before/::after are the hairs; the <b> child is the red dot ON TOP of both (its stacking
+   context sits above the pseudo-elements because it comes later in the DOM). */
+.vg-fps-cross.sniper{width:0;height:0;background:none;box-shadow:none}
+.vg-fps-cross.sniper i{display:none}
+.vg-fps-cross.sniper b{display:block;position:absolute;left:50%;top:50%;width:6px;height:6px;
+  transform:translate(-50%,-50%);background:var(--need);border-radius:50%;
+  box-shadow:0 0 4px 1px var(--need)}
+.vg-fps-cross.sniper::before{content:"";position:absolute;left:50%;top:-44vmin;transform:translate(-50%,0);
+  width:1px;height:88vmin;background:var(--vsr-hair, rgb(0,0,0))}
+.vg-fps-cross.sniper::after{content:"";position:absolute;left:-44vmin;top:50%;transform:translate(0,-50%);
+  width:88vmin;height:1px;background:var(--vsr-hair, rgb(0,0,0))}
+/* the i/b children only exist inside .vg-fps-cross; they're the red-dot reticle for ADS and
+   the sniper's center tick. Hide them in every other crosshair mode. */
+.vg-fps-cross:not(.ads):not(.sniper) i,.vg-fps-cross:not(.ads):not(.sniper) b{display:none}
+/* (the duplicate hairline rules above were retired — the .sniper block carries them now) */
+/* the scope overlays: .on = a surround exists, .reddot = SMG holographic, .sniper = Marksman lens */
+.vg-fps-scope{display:none;position:absolute;inset:0;pointer-events:none}
+.vg-fps-scope.on{display:block}
+/* SMG red-dot: the holographic sight's housing — thin dark side/top borders, a deep bottom
+   border the enlarged gun peeks over (the sight's mount), world only through the clear window.
+   The corners round in *screen space* (2vmin) and the donut floats in that window's dead centre
+   (.vg-fps-cross.ads above). */
+.vg-fps-scope.reddot{background:transparent;position:absolute;left:50%;top:50%;width:76vmin;height:54vmin;
+  transform:translate(-50%,-50%);border-radius:2vmin;
+  border-left:8vmin solid var(--vsr-housing, rgba(16,18,20,.97));
+  border-right:8vmin solid var(--vsr-housing, rgba(16,18,20,.97));
+  border-top:6vmin solid var(--vsr-housing, rgba(16,18,20,.97));
+  border-bottom:12vmin solid var(--vsr-housing, rgba(16,18,20,.97))}
+/* Marksman: world through a circular lens, everything else blacked out, hairlines crossing
+   inside (that's .vg-fps-cross.sniper above) — the lens is the only light. */
+.vg-fps-scope.sniper{background:
+  radial-gradient(circle at 50% 50%, transparent 0 36vmin, var(--vsr-scope, rgb(0,0,0)) 37.5vmin)}
+/* ---- Strikezone (team shooter; shares the Blaster Arena HUD classes above) ---- */
+.vg-strike-final{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;font:800 18px var(--mono);margin:8px 0}
+.vg-strike-final b{font:inherit}
+.vg-strike-win{font-weight:800}

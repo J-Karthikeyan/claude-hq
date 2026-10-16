@@ -22,6 +22,14 @@ pub const GAMES: &[(&str, i64, &[&str])] = &[
     ("kart", 2, &["scale", "tracks"]), // v2: geometry scale + server track list
     ("plat", 1, &[]),
     ("fps", 1, &[]),
+    // v2: the launcher — server-flown rockets, "r"/"b" snapshot rows, 8-tall shot echoes.
+    // v3: Sprinting — the pos message carries a "sp" flag; the server raises its speed cap
+    // for sprinting clients to RUN x SPRINT (the two tests/strike_sync impls keep the same numbers).
+    // v4: parachute respawns — a spawn may lift the life to map-height with a "drop" hint in
+    // the spawn event, and the referee lets that life ride above the floor for DROP_TIME
+    // seconds before the usual MAX_AIR guard kicks in (a v4 client that never drops is
+    // exactly the v1-v3 shape it always was).
+    ("strike", 4, &[]),
     ("hq", 1, &["ride", "look", "skate"]),  // "ride": a = 3 (on a bike); "look": the 3D character (`c`); "skate": a = 4 + its trick `k` and height `y`
     ("type", 1, &[]),
     ("td", 1, &[]),
@@ -81,7 +89,7 @@ mod tests {
         let info = arena_info();
         let keys: Vec<&String> = info["games"].as_object().unwrap().keys().collect();
         assert_eq!(keys, ["pond", "race", "duel", "mines", "farm", "golf", "kart",
-                          "plat", "fps", "hq", "type", "td", "bowl"]
+                          "plat", "fps", "strike", "hq", "type", "td", "bowl"]
                        .iter().map(|s| s.to_string()).collect::<Vec<_>>()
                        .iter().collect::<Vec<_>>());
         // Every game this Arena advertises, it referees.

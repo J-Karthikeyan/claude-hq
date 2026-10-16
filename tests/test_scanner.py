@@ -231,6 +231,62 @@ class ErrorSignatureTests(_TranscriptCase):
              "message": {"content": "rate limit"}}))
 
 
+class RecoveryTests(_TranscriptCase):
+    LATER = "2026-09-01T10:05:00.000Z"   # 5 minutes after TS
+
+    def test_a_good_reply_sets_last_good_reply(self):
+        agg = self.scan([asst([text("hello")], mid="m1")])
+        from datetime import datetime, timezone
+        want = datetime(2026, 9, 1, 10, 0, 0, tzinfo=timezone.utc).timestamp()
+        self.assertEqual(agg["last_good_reply"], want)
+
+    def test_the_error_record_itself_does_not_recover_it(self):
+        # the synthetic "API Error: …" assistant message is an assistant record with
+        # text blocks: if last_good_reply fired on those, every error would clear the
+        # instant it landed. It must not.
+        agg = self.scan([asst([text("API Error: Overloaded")], mid="m1", isApiErrorMessage=True)])
+        self.assertIsNone(agg["last_good_reply"])
+
+    def test_an_error_following_the_last_reply_stays_flagged(self):
+        agg = self.scan([
+            asst([text("working on it")], mid="m1"),
+            asst([text("API Error: Overloaded")], mid="m2", ts=self.LATER, isApiErrorMessage=True),
+        ])
+        errs = [(ts, sig) for ts, sig in agg["errors"]]
+        self.assertEqual(len(errs), 1)
+        # no good reply after the error: it still counts
+        now = errs[0][0] + 60
+        self.assertIsNotNone(dashboard._recent_unrecovered_error(errs, agg["last_good_reply"], now))
+
+    def test_a_good_reply_after_the_error_marks_recovery(self):
+        agg = self.scan([
+            asst([text("API Error: Overloaded")], mid="m1", isApiErrorMessage=True),
+            asst([text("sorry, here is the answer")], mid="m2", ts=self.LATER),
+        ])
+        errs = [(ts, sig) for ts, sig in agg["errors"]]
+        self.assertEqual(len(errs), 1)
+        # a good reply strictly after the error: recovered — the alert clears
+        now = errs[0][0] + 60
+        self.assertIsNone(dashboard._recent_unrecovered_error(errs, agg["last_good_reply"], now))
+
+    def test_recovery_does_not_reach_back_in_time(self):
+        # a good reply before the error does NOT clear it — only forward recovery counts
+        agg = self.scan([
+            asst([text("earlier good turn")], mid="m0"),
+            asst([text("API Error: Overloaded")], mid="m1", ts=self.LATER, isApiErrorMessage=True),
+        ])
+        errs = [(ts, sig) for ts, sig in agg["errors"]]
+        now = errs[0][0] + 60
+        self.assertIsNotNone(dashboard._recent_unrecovered_error(errs, agg["last_good_reply"], now))
+
+    def test_the_six_hour_window_still_expires_an_unanswered_error(self):
+        agg = self.scan([asst([text("API Error: Overloaded")], mid="m1", isApiErrorMessage=True)])
+        errs = [(ts, sig) for ts, sig in agg["errors"]]
+        # 6h+1s after the error, with no reply at all: out of the window either way
+        self.assertIsNone(dashboard._recent_unrecovered_error(errs, agg["last_good_reply"],
+                                                              errs[0][0] + 6 * 3600 + 1))
+
+
 class TranscriptErrorEventTests(_TranscriptCase):
     def events(self, records):
         self.scan(records)

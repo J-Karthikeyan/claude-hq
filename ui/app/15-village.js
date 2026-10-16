@@ -5,6 +5,137 @@ function troopPower(s){ // original "power" score from real activity
   return Math.round(out/1500 + pr*4 + stg*25 + (s.status==="working"?15:0));
 }
 var VILLAGE_STATUS={working:["⚔","on the attack"],waiting:["🛡","awaiting orders"],idle:["💤","resting"],stale:["🏚","retired"]};
+// ---- Overflow Vial: lift a species one stage from the shared bank ----
+// The server only debits its local ledger (vial.json); the stage floor itself is the
+// existing New Game+ DEX_MAX high-water, so the effect stays purely local like any other floor.
+var VIAL_COSTS={0:30, 1:90, 2:180, 3:400};   // fallback mirror of dashboard.VIAL_STAGE_COST
+function vialCostFor(from, vial){
+  var costs=(vial && vial.costs) || VIAL_COSTS, c=costs!=null ? costs[from] : null;
+  return (typeof c==="number" && c>0) ? (c|0) : (VIAL_COSTS[from]|0);
+}
+function vialLiftBtn(x, cr, vxp, vial){
+  var sid=x.sessionId||x.id||x.exampleSessionId;
+  if(!sid || !/^[0-9a-fA-F-]{36}$/.test(String(sid))) return null;
+  var from=creatureStage(cr);                 // floored visible stage, 0..4
+  if(!(from>=0 && from<4)) return null;       // already Apex: nothing left to lift
+  var cost=vialCostFor(from, vial); if(!cost) return null;
+  var nextNm=STAGE_NAMES[from+1]||("stage "+(from+1));
+  var b=el("button","vil-vial-btn"); b.type="button";
+  b.textContent="⚗ "+cost;
+  var short=vxp<cost;
+  b.disabled=short;
+  b.title=short ? ("Overflow Vial: need "+cost+" XP to lift this species to "+nextNm+" (you have "+vxp+")")
+                : ("Overflow Vial: spend "+cost+" XP to lift this species to "+nextNm);
+  b.setAttribute("aria-label", b.title);
+  b.addEventListener("click", function(ev){ ev.stopPropagation();
+    // ensure the payload object the floor update writes back to is the session's own card
+    vialLift({sessionId:sid, id:sid, creature:cr, sessions:STATE.sessions, promptCount:x.promptCount||0,
+              tokens:(x.tokens||{}), status:(x.status||"stale"), title:(x.title||x.alias||creatureSpecies(cr))},
+             cr, from, cost); });
+  return b;
+}
+// "30m" / "6h 30m" for a vial drop's fuse (seconds); a dying drop reads "<1m"
+function vialTtlFmt(sec){ sec=Math.max(0,Math.floor(sec||0)); if(sec<=0) return "—";
+  var h=Math.floor(sec/3600), m=Math.round((sec%3600)/60);
+  if(m===60){ h+=1; m=0; } if(h>0) return h+"h"+(m?" "+m+"m":"");
+  if(m>0) return m+"m"; return "<1m"; }
+// live countdown on the Vial chip — the nearest live deposit's fuse (each drop dies 24 h
+// after it landed), refreshed every 30 s; the seconds never enter partySig, so the party
+// doesn't restart
+var vialCdTicker=null, _lastVialT="";
+function vialChipTick(){
+  var b=$("vilVial"); if(!b) return;
+  var vial=((typeof STATE!=="undefined"&&STATE&&STATE.vial)||{});
+  var src=(vial&&vial.src)||[];
+  if(!src.length){ b.textContent=fmtTok(vial.xp|0); if(_lastVialT!==""){ _lastVialT=""; b.title="Overflow Vial: empty — it fills as Apex creatures keep working"; } return; }
+  var tLev=Math.min.apply(null, src.map(function(r){ return r.ttl||0; }));
+  var t=vialTtlFmt(tLev);
+  var want=fmtTok(vial.xp|0)+" · "+t+"⌛";
+  // renderVillage rewrites the chip on every payload refresh, so don't trust a cached
+  // "unchanged" value — rewrite whenever the rendered text isn't the countdown we expect
+  if(t===_lastVialT && b.textContent===want) return;
+  _lastVialT=t;
+  b.textContent=want;
+  b.title="Overflow Vial: "+(vial.xp|0)+" XP banked (the soonest-to-die "+(src[0].xp|0)+" XP drop dies in "+t+"). Click for the breakdown.";
+}
+function vialChipStart(){ if(vialCdTicker) return; vialCdTicker=setInterval(vialChipTick,30000); }
+// Overflow Vial: the breakdown — lifetime poured per Apex creature, live drops with their fuse
+function renderVialPanel(){
+  var body=$("vilVialBody"); if(!body) return;
+  var vial=((typeof STATE!=="undefined"&&STATE&&STATE.vial)||{});
+  body.innerHTML="";
+  var sess=((typeof STATE!=="undefined"&&STATE&&STATE.sessions)||[]);
+  var head=el("div","vil-vial-head"), hid=el("b"), hxp=el("span");
+  hid.textContent="Live in the vial"; hxp.textContent=fmtTok(vial.xp|0)+" XP";
+  head.appendChild(hid); head.appendChild(hxp); body.appendChild(head);
+  var sub=el("div","vil-vial-sub");
+  sub.textContent="Half the XP an Apex creature keeps earning past 70 prompts, banked for 24 h — spends eat the oldest drop first.";
+  body.appendChild(sub);
+  var h2=el("div","vil-vial-h"); h2.textContent="Poured by creature (season, ever)"; body.appendChild(h2);
+  var byIdx={};
+  sess.forEach(function(x){ var p=x.vialPoured|0; if(p>0){ var k=pokeIdx(x.creature||{}); byIdx[k]=(byIdx[k]||0)+p; } });
+  var keys=Object.keys(byIdx).sort(function(a,b){ return byIdx[b]-byIdx[a]; });
+  var dexSp={};
+  if(typeof POKEDEX!=="undefined"&&POKEDEX&&POKEDEX.species) POKEDEX.species.forEach(function(sp){ if(sp) dexSp[pokeIdx(sp)]=sp; });
+  var list=el("div","vil-vial-list");
+  var pname=function(i){ return (Object.prototype.hasOwnProperty.call(POKE_NAMES,i)?POKE_NAMES[i]:("Species "+i)); };
+  if(!keys.length) list.innerHTML='<div class="feed-empty">No Apex creatures have poured yet.</div>';
+  keys.slice(0,20).forEach(function(k){
+    var row=el("div","vil-vial-row"), nm=el("span","vil-vial-nm"), xp=el("span","vil-vial-xp"), bar=el("span","vil-vial-bar");
+    nm.textContent=pname(+k);
+    xp.textContent=fmtTok(byIdx[k]|0)+" XP"; bar.style.width=Math.min(100,100*(byIdx[k]/(byIdx[keys[0]]||1)))+"%";
+    row.appendChild(bar); row.appendChild(nm); row.appendChild(xp); list.appendChild(row);
+  });
+  body.appendChild(list);
+  var h3=el("div","vil-vial-h"); h3.textContent="Live drops · each dies 24 h after it lands"; body.appendChild(h3);
+  var dl=el("div","vil-vial-rows"), src=((vial&&vial.src)||[]);
+  if(!src.length) dl.innerHTML='<div class="feed-empty">No live drops — the vial only holds what Apex creatures dripped in the last 24 h.</div>';
+  src.forEach(function(r){
+    var row=el("div","vil-vial-row2"), rx=el("b"), rt=el("span"), rb=el("span","vil-vial-bar");
+    rx.textContent=(r.xp|0)+" XP"; rt.textContent=vialTtlFmt(r.ttl)+" ⌛";
+    rb.style.width=Math.max(2,Math.min(100,100*((r.ttl|0)/(vial.expiresIn||86400))))+"%";
+    row.appendChild(rb); row.appendChild(rx); row.appendChild(rt); dl.appendChild(row);
+  });
+  body.appendChild(dl);
+  var f=el("div","vil-vial-sub"); f.textContent="A spend takes the soonest-to-die drop first."; body.appendChild(f);
+}
+function villageVialToggle(){
+  var p=$("vilVialPanel"); if(!p) return;
+  var on=p.hasAttribute("hidden");
+  if(on){ p.removeAttribute("hidden"); p.setAttribute("aria-hidden","false"); renderVialPanel(); }
+  else { p.setAttribute("hidden",""); p.setAttribute("aria-hidden","true"); }
+}
+function vialLift(x, cr, from, cost){
+  var sid=x.sessionId||x.id, nm=creatureSpecies(cr);
+  var nextNm=STAGE_NAMES[from+1]||("stage "+(from+1));
+  if(!confirm("Spend "+cost+" XP from the Overflow Vial to lift "+nm+" to "+nextNm+"?")) return;
+  fetch("/api/vial/spend",{method:"POST",headers:{"Content-Type":"application/json","X-HQ-Token":CSRF},
+    body:JSON.stringify({sessionId:sid, fromStage:from})})
+    .then(function(r){ return r.json().then(function(j){ return {status:r.status, j:(j||{})}; }); })
+    .then(function(res){
+      var j=res.j;
+      if(!j.ok){ toast("⚗ "+(j.error||"the vial refused this"),"ach"); announce("Overflow Vial: "+(j.error||"refused")); return; }
+      // the spent species' high-water may be the dex entry, not a live session: refresh BOTH
+      // (key on the species slot, same grid the seed/dexCrOf loop reads)
+      var k=pokeIdx(cr);
+      dexHighWater(k, from+1);       // New Game+ floor, same machinery as any other high-water
+      if(typeof POKEDEX!=="undefined" && POKEDEX){
+        POKEDEX.species.forEach(function(sp){ if(sp && pokeIdx(sp)===k) sp.maxStage=Math.max(sp.maxStage|0, from+1); });
+      }
+      if(STATE && STATE.vial) STATE.vial.xp=j.balance|0;
+      PARTY_SIG=null;
+      if(STATE && STATE.sessions) renderParty(STATE.sessions);
+      if(typeof POKEDEX!=="undefined" && POKEDEX) renderPokedex(POKEDEX);
+      if(VIEW==="village") renderVillage();
+      if(VIEW==="pokedex") renderPokedex(POKEDEX);
+      toast("⚗ "+nm+" is now "+nextNm+"!","level");
+      logEvent("⚗", nm+" lifted to "+nextNm+" from the Overflow Vial");
+      announce(nm+" lifted to "+nextNm);
+      confettiBurst();
+      try{ playChime(); }catch(e){}
+    })
+    .catch(function(){ toast("⚗ could not reach the vial","ach"); });
+}
 function renderVillage(){
   var s=(STATE&&STATE.season)||{}, sess=(STATE&&STATE.sessions)||[];
   var me=(typeof myLevel==="function") ? myLevel() : s;
@@ -14,6 +145,16 @@ function renderVillage(){
   var gold=0, mana=0; sess.forEach(function(x){ var tk=x.tokens||{}; gold+=(tk.estCostUSD||0); mana+=(tk.output||0); });
   var ember=(s.totals&&s.totals.prompts)||0;
   $("vilGold").textContent=fmtCost(gold).replace("$",""); $("vilMana").textContent=fmtTok(mana); $("vilEmber").textContent=fmtTok(ember);
+  var vial=((STATE&&STATE.vial)||{}), vxp=(vial.xp|0);
+  $("vilVial").textContent=fmtTok(vxp);
+  $("vilVial").title = vxp>0 ? ("Overflow Vial: "+vxp+" XP banked (each drop lasts 24 h). Click for the breakdown.")
+                             : "Overflow Vial: empty — it fills as Apex creatures keep working";
+  vialChipTick(); vialChipStart();
+  var _vIt=$("vilVialItem");
+  if(_vIt && !_vIt.dataset.wired){ _vIt.dataset.wired="1"; _vIt.addEventListener("click",villageVialToggle);
+    _vIt.addEventListener("keydown",function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); villageVialToggle(); } }); }
+  var _vX=$("vilVialX");
+  if(_vX && !_vX.dataset.wired){ _vX.dataset.wired="1"; _vX.addEventListener("click",function(){ var p=$("vilVialPanel"); if(p){ p.setAttribute("hidden",""); p.setAttribute("aria-hidden","true"); } }); }
   var pct=Math.max(0,Math.min(100,s.pct||0));
   $("vilXP").style.width=pct+"%";
   $("vilXPtext").textContent=(s.xpIntoLevel||0).toLocaleString()+" / "+(s.xpForLevel||0).toLocaleString()+" XP to TH "+(lvl+1);
@@ -23,7 +164,9 @@ function renderVillage(){
   var camp=$("vilArmy"); camp.innerHTML="";
   $("vilArmySub").textContent=army.length+" troop"+(army.length===1?"":"s")+" · total power "+army.reduce(function(a,b){return a+b.pw;},0);
   if(!army.length){ camp.innerHTML='<div class="feed-empty">No troops yet — start a Claude session to recruit one.</div>'; }
-  army.slice(0,30).forEach(function(a){
+  // Show EVERY troop (was top-30-by-power): a 0/1-prompt Egg/Hatchling has near-zero power
+  // and fell below the cut, hiding creatures the Overflow Vial needs to be able to lift.
+  army.forEach(function(a){
     var x=a.s, cr=x.creature||{}, st=VILLAGE_STATUS[x.status]||VILLAGE_STATUS.idle;
     var card=el("div","vil-troop status-"+(x.status||"idle"));
     var av=el("div","vil-troop-av"); paintCreature(av, cr, 56, true); card.appendChild(av);
@@ -31,6 +174,7 @@ function renderVillage(){
     var lv=el("div","vil-troop-lv"); lv.textContent=creatureStageName(cr)+(cr.shiny?" ✦":""); card.appendChild(lv);
     var pw=el("div","vil-troop-pw"); pw.innerHTML='<span class="vil-sword">⚔</span>'+a.pw; card.appendChild(pw);
     var stt=el("div","vil-troop-st"); stt.textContent=st[0]+" "+(x.title||x.alias||"session"); stt.title=st[1]; card.appendChild(stt);
+    var vb=vialLiftBtn(x, cr, vxp, vial); if(vb) card.appendChild(vb);
     card.addEventListener("click",function(){ if(typeof openDrawer==="function") openDrawer(x); });
     camp.appendChild(card);
   });

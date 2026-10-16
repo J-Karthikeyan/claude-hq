@@ -65,7 +65,7 @@ for _ext_name in ("ext_skills", "ext_loot", "ext_prestige", "ext_maps", "ext_cup
     except Exception:
         pass
 
-APP_VERSION = "2.5.0"   # Make + compete: editors, gallery, cups, boss, loot, skills
+APP_VERSION = "2.5.2"   # Overflow Vial: Apex surplus banks XP for lifting species one stage
 
 # --------------------------------------------------------------------------- #
 # Paths / constants
@@ -846,6 +846,9 @@ def _scan_file_uncached(path):
         "tok_cacheCreation": 0, "cost": 0.0,
         # creature fatigue inputs: merged busy spans + oldest still-open tool
         "busy_spans": [], "open_tool_since": None,
+        # epoch of the newest assistant record that is NOT itself an API-error
+        # reply; an error alert clears once the session got a good reply after it
+        "last_good_reply": None,
     }
     try:
         f = open(path, "r", encoding="utf-8", errors="replace")
@@ -982,6 +985,10 @@ def _scan_file_uncached(path):
                     sig = _record_error_sig(o)
                     if sig and ts is not None:
                         agg["errors"].append((ts.timestamp(), sig))
+                    elif ts is not None and not sig:
+                        # a real reply (this record isn't the synthetic error message
+                        # itself): the session recovered, so its error alert may clear
+                        agg["last_good_reply"] = ts.timestamp()
                     d = agg["per_day"].setdefault(diso, _new_day()) if diso else None
                     # One API response is written as several records (one per
                     # content block) that all repeat the same usage; count it
@@ -1302,6 +1309,9 @@ def _scan_cursor_uncached(path):
         "tok_cacheCreation": 0, "cost": 0.0,
         "busy_spans": [], "open_tool_since": None,
         "pending_ask": None, "gated_tool_open": None, "permission_mode": None,
+        # (Claude transcripts only, kept for one shape: an error alert clears on a
+        # good reply after it; Cursor's errors list stays empty, so it never reads this)
+        "last_good_reply": None,
         "source": "cursor",
     }
     try:
@@ -2105,6 +2115,21 @@ def get_live_agents():
         return [], f"claude agents error: {e}"
 
 
+def _recent_unrecovered_error(errors, last_good_reply, now_ts):
+    """(ts, sig) of the newest error inside the 6 h window that the session has
+    not answered past, else None. An error a session recovered from — 'recovered'
+    meaning a successful assistant reply landed strictly after it — clears with
+    the recovery instead of lingering out the window."""
+    cutoff = now_ts - 6 * 3600
+    recent = None
+    for ts, sig in errors or []:
+        if ts >= cutoff and (recent is None or ts > recent[0]):
+            recent = (ts, sig)
+    if recent is not None and last_good_reply is not None and last_good_reply > recent[0]:
+        return None
+    return recent
+
+
 def build_session(agent, meals=None, fatigue_on=True):
     """Build one session object from a live agent + its transcript.
     `meals` is load_meals() (read once per build); `fatigue_on` mirrors
@@ -2163,11 +2188,8 @@ def build_session(agent, meals=None, fatigue_on=True):
     waiting_since = None
     ask = agg.get("pending_ask") if isinstance(agg, dict) else None
     errors = agg.get("errors", []) if isinstance(agg, dict) else []
-    cutoff = now_utc().timestamp() - 6 * 3600
-    recent = None
-    for ts, sig in errors:
-        if ts >= cutoff and (recent is None or ts > recent[0]):
-            recent = (ts, sig)
+    last_good = agg.get("last_good_reply") if isinstance(agg, dict) else None
+    recent = _recent_unrecovered_error(errors, last_good, now_utc().timestamp())
     if ask and status != "stale":
         # The tab is parked on a question or a plan approval until you answer it.
         status = "needs"
@@ -2457,7 +2479,10 @@ def build_payload():
             if not sid or sid in live_ids:
                 continue
             agg = scan_file(p)
-            if not agg or agg.get("prompt_count", 0) < 1:
+            # prompt_count < 1 used to skip the whole payload, which hid a creature from
+            # Army Camp even though it shows in the full-history Pokédex — the Overflow
+            # Vial needs every creature reachable, so the cap (not the floor) is the gate.
+            if not agg:
                 continue
             if agg.get("source") == "cursor":
                 try:
@@ -2565,6 +2590,26 @@ def build_payload():
         "health": health,
         "config": config,
     }
+    # Overflow Vial: half (rounded down) of every Apex creature's surplus drips into the
+    # shared bank. Surplus = prompts past the Apex stage threshold × the prompt XP rate —
+    # Apex is only ABOUT prompts, but prompts are what a chat's work shows up as and the
+    # rate keeps a prompt's value the same as the season's ledger counts it. The drip is
+    # idempotent through the ledger's `seenPrompts` watermark: only fresh surplus lands.
+    now_ts = time.time()
+    surplus_prompts = sum(max(0, int(s.get("promptCount", 0) or 0) - STAGE_THRESHOLDS[-1])
+                          for s in sessions)
+    vial_drip(surplus_prompts, at=now_ts)
+    vxp = vial_tick(now_ts)
+    for s in sessions:
+        # lifetime XP this session poured into the vial: only an Apex (fully evolved)
+        # creature earns past 70 prompts, and each surplus prompt drips 5 XP
+        s["vialPoured"] = max(0, int(s.get("promptCount", 0) or 0)
+                              - STAGE_THRESHOLDS[-1]) * 5
+    with _vial_lock:
+        vial_state = _vial_read(now_ts)
+    payload["vial"] = {"xp": vxp, "expiresIn": VIAL_WINDOW,
+                       "costs": dict(VIAL_STAGE_COST),
+                       "src": vial_sources(vial_state, now_ts)}
     if error:
         payload["error"] = error
     return payload
@@ -2680,8 +2725,9 @@ def build_session_detail(sid):
         la = agg["last_activity"]
         age = int((now_utc() - la).total_seconds()) if la else 0
         status = "stale" if age > 86400 else "idle"
-        cutoff = now_utc().timestamp() - 6 * 3600
-        if any(ts >= cutoff for ts, _ in agg["errors"]):
+        # as in the session list: an error the session already answered past
+        # is a recovered error — it stops flagging, even inside the 6 h window
+        if _recent_unrecovered_error(agg["errors"], agg.get("last_good_reply"), now_utc().timestamp()) is not None:
             status = "needs"
         creature = creature_for(sid, agg["prompt_count"])
         fz = _offpayload_fatigue(sid, agg)
@@ -4330,6 +4376,193 @@ def record_meal(rid, sid, kind, at, now=None):
 
 
 # --------------------------------------------------------------------------- #
+# Overflow Vial: past Apex a creature's session keeps earning XP no one spends, so half
+# of that surplus drips into a shared bank with a 24 h fuse. The ledger is per-deposit
+# (each drop expires on its own clock) and a spend CONSUMES deposits oldest-first,
+# rewriting the ledger — so an expired deposit can never drag a spend onto fresh XP.
+#
+# State: {"deposits": [{at, xp}], "spent": [{at, xp, sid, stage}], "seenPrompts": int}.
+#   - Balance(t) = sum(d.xp for d in deposits if t - d.at < VIAL_WINDOW)
+#   - "spent" is a pure audit log (who lifted what, when); it never feeds the balance.
+# --------------------------------------------------------------------------- #
+
+VIAL_PATH = os.path.join(HERE, "vial.json")
+VIAL_WINDOW = 86400.0           # a deposit dies one UTC day after it lands
+VIAL_MAX = 10000                # hard ceiling so a forgotten bank can't grow forever
+
+_vial_lock = threading.Lock()
+
+
+def _vial_read(now):
+    """{deposits, spent, seenPrompts} — only live entries; a missing/corrupt file is
+    empty balance. The drip watermark rides the same file so a payload build and a grant
+    share one read-modify-write."""
+    try:
+        with open(VIAL_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        return {"deposits": [], "spent": [], "seenPrompts": 0}
+    dep = raw.get("deposits") if isinstance(raw, dict) else None
+    sp = raw.get("spent") if isinstance(raw, dict) else None
+    sn = raw.get("seenPrompts") if isinstance(raw, dict) else None
+    out = {"deposits": [], "spent": [],
+           "seenPrompts": int(sn) if isinstance(sn, (int, float)) and sn >= 0 else 0}
+    if isinstance(dep, list):
+        for d in dep:
+            if (isinstance(d, dict) and isinstance(d.get("xp"), (int, float))
+                    and isinstance(d.get("at"), (int, float))
+                    and 0 < d["xp"] <= VIAL_MAX and now - VIAL_WINDOW < d["at"] <= now + 60):
+                out["deposits"].append({"at": float(d["at"]), "xp": int(d["xp"])})
+    if isinstance(sp, list):
+        for s in sp:
+            if (isinstance(s, dict) and isinstance(s.get("xp"), (int, float))
+                    and isinstance(s.get("at"), (int, float))
+                    and 0 < s["xp"] <= VIAL_MAX and now - VIAL_WINDOW < s["at"] <= now + 60):
+                out["spent"].append({"at": float(s["at"]), "xp": int(s["xp"]),
+                                     "sid": s.get("sid") or "", "stage": int(s.get("stage") or 0)})
+    out["deposits"].sort(key=lambda d: d["at"])
+    out["spent"].sort(key=lambda s: s["at"])
+    return out
+
+
+def _vial_write(state):
+    _atomic_write_json(VIAL_PATH, {"version": 1, **state})
+
+
+def vial_sources(state, now):
+    """Live deposits as {xp, ttl} rows (ttl = seconds until this drop dies), last expiry
+    first. A spend consumes whole drops oldest-first but its leftover partial stays at the
+    ORIGINAL timestamp, so a deposit's ttl is the death of the XP sitting in it — the UI
+    ttl is exact even after partial spends."""
+    return sorted(({"xp": d["xp"], "ttl": max(0.0, d["at"] + VIAL_WINDOW - now)}
+                   for d in state["deposits"]), key=lambda r: -r["ttl"])
+
+
+def vial_balance(state):
+    """Effective XP in the vial right now: the sum of the live deposits (spends already
+    rewrote the ledger when they consumed deposits oldest-first, so there is nothing to
+    subtract here)."""
+    return sum(d["xp"] for d in state["deposits"])
+
+
+def vial_tick(now=None):
+    """Expire old deposits & spends on disk (a no-op if nothing aged out) and return the
+    live balance. Called on every payload build so the fuse runs even while no one spends."""
+    now = time.time() if now is None else now
+    with _vial_lock:
+        state = _vial_read(now)
+        try:
+            with open(VIAL_PATH, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+        except Exception:
+            raw = None
+        live_n = len(state["deposits"]) + len(state["spent"])
+        raw_n = (len(raw.get("deposits", [])) + len(raw.get("spent", []))) if isinstance(raw, dict) else live_n
+        if raw_n != live_n or not isinstance(raw, dict):
+            try:
+                _vial_write(state)
+            except OSError:
+                pass
+        return vial_balance(state)
+
+
+def _vial_cap(deposits):
+    """Trim the deposit ledger to VIAL_MAX total XP, oldest-first (in place)."""
+    total = sum(d["xp"] for d in deposits)
+    while total > VIAL_MAX and deposits:
+        old = deposits[0]
+        if old["xp"] <= total - VIAL_MAX:
+            total -= old["xp"]
+            deposits.pop(0)
+        else:
+            deposits[0] = {"at": old["at"], "xp": old["xp"] - (total - VIAL_MAX)}
+            total = VIAL_MAX
+    return deposits
+
+
+def vial_grant(xp, at=None):
+    """Deposit XP (called when a refreshed payload sees a session's surplus rise)."""
+    if xp <= 0:
+        return
+    at = time.time() if at is None else float(at)
+    with _vial_lock:
+        state = _vial_read(at)
+        state["deposits"].append({"at": at, "xp": int(xp)})
+        _vial_cap(state["deposits"])
+        try:
+            _vial_write(state)
+        except OSError:
+            pass
+
+
+# Cost to lift a creature's species one stage via the vial (prompt-gap × 10 × 2, the
+# "half-efficiency tax": Apex creatures only bank half their surplus).
+# (VIAL_STAGE_COST is defined above vial_drip so both share one cost table.)
+
+
+def vial_drip(surplus_prompts, at=None):
+    """Turn prompts past the Apex threshold into half-XP deposits. Idempotent through
+    the ledger's `seenPrompts` watermark: only fresh surplus lands (a refresh never
+    double-drips). Returns the XP just deposited (0 if nothing new)."""
+    if surplus_prompts <= 0:
+        return 0
+    at = time.time() if at is None else float(at)
+    with _vial_lock:
+        st = _vial_read(at)
+        seen = int(st.get("seenPrompts", 0) or 0)
+        if surplus_prompts <= seen:
+            return 0
+        delta = ((surplus_prompts - seen) * 10) // 2
+        if delta:
+            st["deposits"].append({"at": at, "xp": int(delta)})
+            _vial_cap(st["deposits"])
+        st["seenPrompts"] = surplus_prompts
+        try:
+            _vial_write(st)
+        except OSError:
+            return 0
+        return int(delta)
+
+
+VIAL_STAGE_COST = {0: 30, 1: 90, 2: 180, 3: 400}
+
+
+def vial_spend(session_id, from_stage, at=None):
+    """Spend from the vial to lift a creature one stage. Returns {"ok", "balance", "cost",
+    "error"}; ok=False with error on insufficient funds, Apex, or a bad id."""
+    if not (isinstance(session_id, str) and _UUID_RE.fullmatch(session_id)):
+        return {"ok": False, "error": "bad session id"}
+    if not (isinstance(from_stage, int) and not isinstance(from_stage, bool)
+            and 0 <= from_stage <= 3):
+        return {"ok": False, "error": "already Apex"}
+    cost = VIAL_STAGE_COST[from_stage]
+    at = time.time() if at is None else float(at)
+    with _vial_lock:
+        state = _vial_read(at)
+        if vial_balance(state) < cost:
+            return {"ok": False, "error": "the vial is short", "cost": cost,
+                    "balance": vial_balance(state)}
+        # consume oldest-first (the same fuse order the deposits expire in)
+        need = cost
+        while need > 0 and state["deposits"]:
+            old = state["deposits"][0]
+            if old["xp"] <= need:
+                need -= old["xp"]
+                state["deposits"].pop(0)
+            else:
+                state["deposits"][0] = {"at": old["at"], "xp": old["xp"] - need}
+                need = 0
+        state["spent"].append({"at": at, "xp": int(cost), "sid": session_id,
+                               "stage": from_stage + 1})
+        try:
+            _vial_write(state)
+        except OSError:
+            return {"ok": False, "error": "the vial ledger is unwritable"}
+        _invalidate_payload_memo()
+        return {"ok": True, "cost": cost, "balance": vial_balance(state)}
+
+
+# --------------------------------------------------------------------------- #
 # Arena pantry proxy (Poke Coins, food, gifts). The page talks only to these
 # local routes; arena.pantry() forwards an allowlisted body to the server.
 # --------------------------------------------------------------------------- #
@@ -5139,6 +5372,7 @@ POST_PATHS = (
     "/api/arena/cali/order",
     "/api/arena/sounds",
     "/api/games/state",
+    "/api/vial/spend",
 ) + ARENA_ROOM_POSTS + tuple(p for m in EXT for p in getattr(m, "POST", {}))
 
 
@@ -5153,8 +5387,8 @@ GAMES_SAVE_PATH = os.path.join(HERE, "games-save.json")
 GAMES_SAVE_MAX = 256 * 1024
 _GAME_FILE_RE = re.compile(r"[a-z][a-z0-9_-]{0,40}\.(js|css)")
 # The vendored three.js modules and each 3D game's Kenney (CC0) models and data (Mini Golf,
-# Kart Racing, Platformer Rush, Blaster Arena): exactly one folder level, lowercase names, these extensions only.
-_GAME_ASSET_RE = re.compile(r"(vendor/[a-z][a-z0-9-]{0,40}\.js|(golf|kart|platformer|fps)/[a-z][a-z0-9-]{0,40}\.(glb|json|png))")
+# Kart Racing, Platformer Rush, Blaster Arena, Strikezone): exactly one folder level, lowercase names, these extensions only.
+_GAME_ASSET_RE = re.compile(r"(vendor/[a-z][a-z0-9-]{0,40}\.js|(golf|kart|platformer|fps|strike)/[a-z][a-z0-9-]{0,40}\.(glb|json|png))")
 _GAME_TYPES = {"js": "application/javascript; charset=utf-8", "css": "text/css; charset=utf-8",
                "glb": "model/gltf-binary", "json": "application/json; charset=utf-8", "png": "image/png"}
 _games_lock = threading.Lock()
@@ -6100,6 +6334,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, json.dumps({"error": "bad save: %s" % e}))
             except OSError as e:
                 self._send(500, json.dumps({"error": "could not write save: %s" % e}))
+            return
+
+        if path == "/api/vial/spend":
+            sid = body.get("sessionId")
+            stg = body.get("fromStage")
+            if not (isinstance(sid, str) and _UUID_RE.fullmatch(sid)):
+                self._send(400, json.dumps({"error": "invalid sessionId"}))
+                return
+            if not _int_in(stg, 0, 3):
+                self._send(400, json.dumps({"error": "invalid fromStage"}))
+                return
+            try:
+                self._send(200, json.dumps(vial_spend(sid, stg)))
+            except OSError as e:
+                self._send(500, json.dumps({"error": "could not write the vial: %s" % e}))
             return
 
         if path == "/api/meta":

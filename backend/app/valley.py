@@ -44,6 +44,7 @@ from sqlalchemy import func, select
 
 from . import golf as golfmod
 from . import fps as fpsmod
+from . import strike as strikemod
 from . import hqpresence as hqmod
 from . import typerace as typemod
 from . import results as resultsmod
@@ -56,7 +57,7 @@ from .db import SessionLocal
 from .models import DailyStat, RoomFarm
 from .rooms import Member, Room, manager
 
-GAMES = ("pond", "race", "duel", "mines", "farm", "golf", "kart", "plat", "fps", "hq", "type")
+GAMES = ("pond", "race", "duel", "mines", "farm", "golf", "kart", "plat", "fps", "strike", "hq", "type")
 
 # Protocol version + capabilities per game. Sent in the room's welcome (so a client
 # can tell "this Arena is too old for me" from "I am too old for this Arena" before it
@@ -65,6 +66,10 @@ GAMES = ("pond", "race", "duel", "mines", "farm", "golf", "kart", "plat", "fps",
 # Keep in step with backend-rs (arena_info) and games/multi.js (CLIENT_PROTO).
 PROTOCOL: dict[str, dict] = {g: {"v": 1, "caps": []} for g in GAMES}
 PROTOCOL["kart"] = {"v": 2, "caps": ["scale", "tracks"]}   # v2: geometry scale + server track list
+# strike is the one game where the two referees genuinely differ: the frozen Python one
+# judges hitscan only (v1), the Rust one (backend-rs, protocol.rs) also flies the launcher's
+# rockets (v2). test_protocol.py allows exactly this pair.
+PROTOCOL["strike"] = {"v": 1, "caps": []}
 
 
 def arena_info() -> dict:
@@ -72,7 +77,8 @@ def arena_info() -> dict:
     return {"impl": "py", "games": {g: dict(PROTOCOL[g]) for g in GAMES}, "party": {"v": 1, "order": list(partymod.ORDER)}}
 GAME_NAMES = {"pond": "Fishing Pond", "race": "Puzzle Race", "duel": "Creature Duel",
               "mines": "Co-op Mines", "farm": "Shared Farm", "golf": "Mini Golf",
-              "kart": "Kart Racing", "plat": "Platformer Rush", "fps": "Blaster Arena", "hq": "HQ", "type": "Code Typing Race"}
+              "kart": "Kart Racing", "plat": "Platformer Rush", "fps": "Blaster Arena", "strike": "Strikezone",
+              "hq": "HQ", "type": "Code Typing Race"}
 MAX_LOBBY = 8
 SEND_TIMEOUT = 0.5            # seconds one socket may take to accept a lobby fan-out
 now = time.monotonic          # patched in tests
@@ -310,6 +316,7 @@ class RoomValley:
         self.kart = kartmod.Kart()
         self.plat = platmod.Plat()
         self.fps = fpsmod.Fps()
+        self.strike = strikemod.Strike()
         self.hq = hqmod.Presence()
         self.type = typemod.TypeRace()
 
@@ -1074,6 +1081,12 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
                     out.lobby(list(lobby.members), "fps", match=v.fps.view(now()), back=member.user_id)
                 else:
                     out.to(member.ws, "fps", match=v.fps.view(now()))
+            elif g == "strike":
+                if v.strike.enter(member.user_id, member.public(), now()):
+                    # back from a dropped socket, or dropping in mid-match: everyone sees it
+                    out.lobby(list(lobby.members), "strike", match=v.strike.view(now()), back=member.user_id)
+                else:
+                    out.to(member.ws, "strike", match=v.strike.view(now()))
     elif op == "leave":
         _leave_lobby(v, g, member.user_id, out)
     elif op == "invite":
@@ -1146,6 +1159,8 @@ async def handle(room: Room, member: Member, msg: dict) -> None:
         plat_op(room.room_id, v.plat, lobby, member, op, msg, out)
     elif g == "fps":
         fps_op(room.room_id, v.fps, lobby, member, op, msg, out)
+    elif g == "strike":
+        strike_op(room.room_id, v.strike, lobby, member, op, msg, out)
     await _flush(room, out)
 
 
@@ -1425,6 +1440,79 @@ def _fps_tick_on(room_id: str) -> bool:
     return realtime.start(key, fpsmod.HZ, step, lambda: now()) is not None
 
 
+# ----------------------------------------------------------------- strike --
+def strike_op(room_id: str, sm: "strikemod.Strike", lobby: Lobby, member: Member, op: str, msg: dict, out: Out) -> None:
+    """Strikezone: moves and shots feed the room's tick loop (which batches what happened
+    into one snapshot per tick); everything else goes to the lobby at once."""
+    t = now()
+    uid = member.user_id
+    ids = list(lobby.members)
+    if op == "pos":
+        _ok, fix = sm.pos(uid, msg, t)
+        if fix is not None:
+            out.to(member.ws, "fix", **fix)
+    elif op == "fire":
+        _shot, sync = sm.fire(uid, msg, t)
+        if sync is not None:
+            out.to(member.ws, "ammo", **sync)
+    elif op == "reload":
+        sm.reload(uid, msg, t)
+    elif op == "weapon":
+        sm.weapon(uid, msg, t)
+    elif op == "view":
+        out.to(member.ws, "strike", match=sm.view(t))
+    elif op == "char":
+        c = sm.char(uid, msg)
+        if c is None:
+            out.err(member.ws, "pick a character")
+        else:
+            out.lobby(ids, "char", user=uid, c=c)
+    elif op in ("start", "end"):
+        if lobby.host != uid:
+            out.err(member.ws, "only the host can do that")
+            return
+        lobby.prev_host = None
+        if op == "start":
+            err = sm.start(lobby.members, msg.get("minutes"), msg.get("kills"), t, tsize=msg.get("tsize"))
+            if err is None and not _strike_tick_on(room_id):
+                sm.end()
+                err = "the Arena is busy right now: try again in a minute"
+            if err:
+                out.err(member.ws, err)
+            else:
+                out.lobby(ids, "strike", match=sm.view(t), by=member.public())
+        else:
+            sm.end()
+            realtime.stop("strike:" + room_id)
+            out.lobby(ids, "strike", match=sm.view(t))
+
+
+def _strike_tick_on(room_id: str) -> bool:
+    """Start the room's match loop (a no-op if it runs). False: no slot under the budget."""
+    key = "strike:" + room_id
+
+    async def step(t: float, send: bool) -> bool:
+        v = _rooms.get(room_id)
+        room = manager.get(room_id)
+        if v is None or room is None or not v.strike.running():
+            return False
+        ids = list(v.lobbies["strike"].members) + [u for u in v.strike.players if u not in v.lobbies["strike"].members]
+        out = Out("strike")
+        for ev, data in v.strike.tick(t, send):
+            out.lobby(ids, ev, **data)
+        if not v.strike.running():
+            out.lobby(ids, "strike", match=v.strike.view(t))
+        if out.items:
+            tk = realtime.get(key)
+            if tk is not None:
+                n = sum(1 for m in room.members.values() if m.user_id in ids)
+                tk.count(sum(len(json.dumps(p, separators=(",", ":"))) for _k, _t, p in out.items) * max(1, n))
+            await _flush(room, out)
+        return v.strike.running()
+
+    return realtime.start(key, strikemod.HZ, step, lambda: now()) is not None
+
+
 # -------------------------------------------------------------------- golf --
 def golf_op(gm: "golfmod.Golf", lobby: Lobby, member: Member, op: str, msg: dict, out: Out,
             rng: random.Random | None = None) -> None:
@@ -1555,6 +1643,8 @@ def _leave_lobby(v: RoomValley, g: str, user_id: str, out: Out, disconnected: bo
         out.lobby(list(lobby.members), "plat", run=v.plat.view(now()), left=user_id)
     elif g == "fps" and v.fps.drop(user_id, now(), blip=disconnected):
         out.lobby(list(lobby.members), "fps", match=v.fps.view(now()), left=user_id)
+    elif g == "strike" and v.strike.drop(user_id, now(), blip=disconnected):
+        out.lobby(list(lobby.members), "strike", match=v.strike.view(now()), left=user_id)
     elif g == "hq":
         v.hq.drop(user_id)
     elif g == "type":
