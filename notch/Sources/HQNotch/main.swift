@@ -27,6 +27,9 @@ final class NotchController {
     private var notch = CGSize(width: 190, height: 32)
     private var mouseTimer: Timer?
     private var leftAt: Date?
+    private var enteredAt: Date?
+    /// The cursor must rest on the closed pill this long before it opens.
+    static let hoverDelay: TimeInterval = 0.5
     private var autoOpenUntil: Date?
     private var bag = Set<AnyCancellable>()
     static let panelSize = CGSize(width: NotchRoot.expandedWidth + 40, height: 900)
@@ -105,9 +108,13 @@ final class NotchController {
         panel.ignoresMouseEvents = !inside
         if inside {
             leftAt = nil
-            if !model.expanded { set(expanded: true) }
+            if !model.expanded {
+                if enteredAt == nil { enteredAt = Date() }
+                if let e = enteredAt, Date().timeIntervalSince(e) >= Self.hoverDelay { set(expanded: true) }
+            }
             return
         }
+        enteredAt = nil
         guard model.expanded else { return }
         if let until = autoOpenUntil, Date() < until { return }
         autoOpenUntil = nil
@@ -123,6 +130,7 @@ final class NotchController {
 
     private func set(expanded: Bool) {
         model.expanded = expanded
+        enteredAt = nil
         if !expanded { leftAt = nil; panel.resignKey() }
     }
 }

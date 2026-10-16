@@ -2,7 +2,7 @@
 
 Your Claude HQ party, living in the Mac's notch. Every live Claude Code session shows up as
 the **same Pokémon HQ gives it**. It hops while it works, bounces with a `!` when it needs
-you, jumps when it's done, and gets knocked out (grey) when a turn fails. Hover the notch to
+you, jumps when it's done, and gets knocked out (grey) when a turn fails. Rest the cursor on the notch for half a second to
 see every session: what it's doing right now, its last prompt, and a live ticker of tool
 calls with `+N −M` line counts for edits.
 
@@ -60,10 +60,11 @@ Claude Code ──hooks──▶ hq_notch_hook.py ──Unix socket──▶ HQ 
   `127.0.0.1`. Prompts, commands and file paths never leave the machine.
 - **Same Pokémon as HQ.** `Creature.swift` ports `creature_for()` / `shiny_for_species()`
   from `dashboard.py` and `pokeDexFor()` from `ui/app/06-trainer-packs.js`. The evolution
-  lines are generated from the JS (`tools/gen_pokedata.py`). Two browser-only extras are not
-  mirrored: manual branch picks (Eevee etc.) and the per-species "high-water" evolution
-  floor. Both live in the browser's localStorage, so a session can show an earlier form
-  here than in a browser that has already seen that species evolve further.
+  lines are generated from the JS (`tools/gen_pokedata.py`). Like HQ's cards, a species never
+  shows an earlier form than the highest stage you've reached with it: the notch reads each
+  species' `maxStage` from HQ's `/api/pokedex` (at most once a minute, remembered while HQ is
+  down). Not mirrored: manual branch picks (Eevee etc.), which live only in the browser.
+  Sprites are always the 2D animated pack.
 - **Sprites are hotlinked, never bundled.** They are downloaded on first use and cached in
   `~/Library/Caches/HQNotch`. If the CDN is blocked, an original drawn blob takes their place.
 
