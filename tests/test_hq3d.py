@@ -223,15 +223,20 @@ const bld = (x, z) => (Math.abs(x) < 4.8 && Math.abs(z) < 3.8) || (Math.abs(x + 
   || (Math.abs(x - 10.5) < 3.0 && Math.abs(z - 0.5) < 2.8);
 const pts = (cx, cz, hw, hd) => { const o = []; for (let i = 0; i <= 10; i++) for (let j = 0; j <= 10; j++) o.push([cx - hw + 2*hw*i/10, cz - hd + 2*hd*j/10]); return o; };
 const G = X.garage, K = X.car, B = X.bike;
-const garage = pts(G.x, G.z, G.w/2, G.d/2), car = pts(K.x, K.z, 0.5, 1.05);
+const garage = pts(G.x, G.z, G.w/2, G.d/2);
 const path = pts(0, 7.4, 1.5, 3.4);                       // the door (z 4.8) to the road (z 11)
+// the lane the car drives out along, its full width, from where it is parked to the road
+const lane = pts(K.x, (K.z + 11)/2, K.wid/2, (11 - K.z)/2);
 console.log(JSON.stringify({
-  clearOfBuilding: garage.concat(car).every(p => !bld(p[0], p[1])),
-  onTheBlock: garage.concat(car).every(p => Math.abs(p[0]) < 17 && p[1] < 11 && p[1] > -15),
+  clearOfBuilding: garage.every(p => !bld(p[0], p[1])) && !bld(B.x, B.z),
+  onTheBlock: garage.every(p => Math.abs(p[0]) < 17 && p[1] < 11 && p[1] > -15),
   pathFree: path.every(p => !blocked(p[0], p[1])),
-  garageSolid: blocked(G.x, G.z) && blocked(K.x, K.z),
-  bikeFree: !blocked(B.x, B.z) && !bld(B.x, B.z) && Math.abs(B.x) < 17 && B.z < 11,
-  carOnDrive: Math.abs(K.x - G.x) < 0.01 && K.z > G.z + G.d/2,
+  wallsSolid: blocked(G.x, G.z - G.d/2 + 0.1) && blocked(G.x - G.w/2 + 0.1, G.z) && blocked(G.x + G.w/2 - 0.1, G.z),
+  doorOpen: !blocked(G.x - 1.6, G.z + G.d/2 + 0.2) && !blocked(G.x - 1.6, G.z),     // walk in beside the car
+  carInside: Math.abs(K.x - G.x) + K.wid/2 < G.w/2 - 0.2 && K.z - K.len/2 > G.z - G.d/2 + 0.2 && K.z + K.len/2 < G.z + G.d/2,
+  carParkedSolid: blocked(K.x, K.z) && blocked(K.x, K.z, true),
+  driveOut: lane.every(p => !blocked(p[0], p[1], false)),
+  bikeFree: !blocked(B.x, B.z) && Math.abs(B.x) < 17 && B.z < 11 && !(Math.abs(B.x - G.x) < G.w/2 + 0.3 && B.z < G.z + G.d/2),
   cols: colors({paint: '#112233', accent: '#ABCDEF'}), dflt: colors({paint: 'red', accent: '#12'}), none: colors(null)
 }));
 """
@@ -247,7 +252,8 @@ class ArenaCity(unittest.TestCase):
                            capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         got = json.loads(r.stdout)
-        for k in ("clearOfBuilding", "onTheBlock", "pathFree", "garageSolid", "bikeFree", "carOnDrive"):
+        for k in ("clearOfBuilding", "onTheBlock", "pathFree", "wallsSolid", "doorOpen", "carInside",
+                  "carParkedSolid", "driveOut", "bikeFree"):
             self.assertTrue(got[k], k)
         self.assertEqual(got["cols"], {"paint": 0x112233, "accent": 0xABCDEF})
         self.assertEqual(got["dflt"], {"paint": 0x2a3c50, "accent": 0xffb347})   # same fallbacks as the building
@@ -255,7 +261,11 @@ class ArenaCity(unittest.TestCase):
         city = open(os.path.join(ROOT, "games", "hqcity.js"), encoding="utf-8").read()
         self.assertIn('lotExtras(L, g, lotColors(h.look));', city)                # on every HQ lot
         self.assertIn('bikes.push({g: Bm.g,', city)                               # its bike is ridable
-        self.assertIn('if(L.h && lotExtraBlocked(lx, lz)) return true;', city)    # you walk round the garage and car
+        self.assertIn('kind: "car"});', city)                                     # and its car drivable
+        self.assertIn('lotExtraBlocked(lx, lz, !L.car || L.car.g.visible)', city) # the parked car blocks; the driven one does not
+        src = open(os.path.join(ROOT, "games", "hq3d.js"), encoding="utf-8").read()
+        self.assertIn('var car = b.kind === "car", B = car ? carModel(b.color, b.roof) : bikeModel(b.color);', src)
+        self.assertIn('(!nose || !blocked(nx + sy*nose, nz + cy*nose))', src)    # the bumper stops at walls
 
     def test_layout(self):
         r = subprocess.run(["node", "-e", CITY, os.path.join(ROOT, "games", "hqbase.js"), os.path.join(ROOT, "games", "hqcity.js")],
