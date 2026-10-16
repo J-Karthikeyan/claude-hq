@@ -746,6 +746,33 @@ details.stalewrap .hint{text-transform:none;letter-spacing:0}
 .vil-res-ic.gold{background:linear-gradient(180deg,#ffe08a,#f0b429)}
 .vil-res-ic.mana{background:linear-gradient(180deg,#a5d8ff,#4dabf7);color:#022}
 .vil-res-ic.ember{background:linear-gradient(180deg,#ffc9c9,#ff6b6b);color:#300}
+.vil-res-ic.vial{background:linear-gradient(180deg,#e5c8ff,#b197fc);color:#26084a;font-size:19px}
+/* the Vial chip is also a toggle: affordance + focus ring, otherwise identical to siblings */
+.vil-res-item.vial-click{cursor:pointer}
+.vil-res-item.vial-click:focus-visible{outline:2px solid var(--ring,var(--brand));outline-offset:2px;border-radius:8px}
+/* the Overflow Vial breakdown panel — a card that slides in under the XP bar */
+.vil-vial-panel{position:relative;margin:-2px 0 14px;padding:12px 14px;border:1px solid var(--border);border-radius:14px;
+  background:var(--panel-2,var(--panel));animation:vialIn .22s ease-out both;overflow:hidden}
+.vil-vial-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.vil-vial-hd b{font-size:13px;letter-spacing:.2px}
+.vil-vial-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:2px 0 6px;font-size:12px}
+.vil-vial-head span{color:var(--muted);font:700 11px var(--mono)}
+.vil-vial-sub,.vil-vial-note{font-size:11px;color:var(--faint);margin:4px 0 8px;line-height:1.4}
+.vil-vial-h{margin:8px 0 5px;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+.vil-vial-list,.vil-vial-rows{display:flex;flex-direction:column;gap:5px;max-height:220px;overflow:auto}
+.vil-vial-row,.vil-vial-row2{position:relative;display:flex;align-items:center;gap:9px;font-size:12px;
+  padding:5px 8px;border-radius:8px;background:var(--panel);overflow:hidden}
+.vil-vial-row2 b{font:700 12px/1 var(--mono);z-index:1}
+.vil-vial-row2 span{color:var(--muted);margin-left:auto;font:700 11px var(--mono);z-index:1}
+.vil-vial-nm{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;z-index:1}
+.vil-vial-xp{font:700 11px var(--mono);color:var(--gold,#f0b429);z-index:1}
+.vil-vial-bar{position:absolute;inset:0 auto 0 0;background:linear-gradient(90deg,var(--brand-soft),transparent);
+  pointer-events:none;transition:width .3s;z-index:0}
+.dw-vial{margin-top:8px;padding:6px 9px;border:1px solid var(--brand-line);border-radius:9px;
+  background:var(--brand-soft);color:var(--brand);font-size:12px;font-weight:600}
+@keyframes vialIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+html.hq-calm .vil-vial-panel{animation:none}
+@media (prefers-reduced-motion:reduce){.vil-vial-panel{animation:none}.vil-vial-bar{transition:none}}
 .vil-xpbar{position:relative;height:16px;border-radius:10px;background:var(--panel);border:1px solid var(--border);overflow:hidden;margin-bottom:16px}
 .vil-xpfill{height:100%;background:linear-gradient(90deg,#8ce99a,#40c057);border-radius:10px 0 0 10px;transition:width .5s}
 .vil-xptext{position:absolute;inset:0;display:grid;place-items:center;font-size:10px;font-weight:700;color:var(--text);text-shadow:0 1px 2px rgba(0,0,0,.25)}
@@ -759,6 +786,10 @@ details.stalewrap .hint{text-transform:none;letter-spacing:0}
 .vil-troop-pw{font:700 12px/1 var(--mono);color:var(--gold,#f0b429);margin-top:3px}.vil-sword{opacity:.8;margin-right:2px}
 .vil-troop-st{font-size:10px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}
 .vil-troop.status-working{border-color:#40c057}.vil-troop.status-waiting{border-color:#f0b429}
+.vil-vial-btn{margin-top:6px;font:700 11px/1 var(--mono);color:var(--brand);background:var(--brand-soft);
+  border:1px solid var(--brand-line);border-radius:7px;padding:4px 8px;cursor:pointer}
+.vil-vial-btn:hover:not([disabled]){background:color-mix(in srgb,var(--brand) 20%,transparent)}
+.vil-vial-btn[disabled]{opacity:.45;cursor:default}
 .vil-grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 @media(max-width:720px){.vil-grid2{grid-template-columns:1fr}}
 .vil-buildings{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:12px}

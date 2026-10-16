@@ -130,6 +130,13 @@ function renderDrawer(sess, d){
   body.appendChild(secCr);
   // keep the drawer avatar in sync with the freshest creature data
   paintCreature($("dwAv"), crD, 76); DRAWER_AV_SIG = drawerAvSig(crD);
+  // Overflow Vial: a fully evolved (Apex) creature keeps earning past 70 prompts, and the
+  // vial banks half of it — show what this creature has poured into the vial over its life
+  var vp=(sess && (sess.vialPoured|0))||0;
+  if(vp>0){ var vb=el("div","dw-vial"); vb.setAttribute("role","note");
+    vb.textContent="⚗ "+fmtTok(vp)+" XP poured into the Overflow Vial";
+    vb.title="Apex surplus: this session kept earning past 70 prompts, and the vial banked half of every drip.";
+    secCr.appendChild(vb); }
 
   // tokens + cost
   var secT = dwSec("Usage");

@@ -285,7 +285,9 @@ class ScanCollectorTests(unittest.TestCase):
         agg = dashboard._scan_file_uncached(self.path)
         self.assertEqual(set(agg) - {"busy_spans", "open_tool_since",
                                     "pending_ask", "gated_tool_open", "permission_mode",
-                                    "ws_days"}, PRE_FATIGUE_KEYS)  # ws_days: HQ 2.5 work signals
+                                    "ws_days",                          # HQ 2.5 work signals
+                                    "last_good_reply"},                 # an error clears on a good reply after it
+                         PRE_FATIGUE_KEYS)
         self.assertEqual(agg["prompt_count"], 2)
         self.assertEqual(agg["activity_ts"],
                          [BASE, BASE - 13 * 86400, BASE + 10, BASE + 3020,

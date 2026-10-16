@@ -131,21 +131,22 @@ use std::sync::{Arc, Mutex};
 
 // ---------------------------------------------------------------- catalogs --
 
-/// Every Valley game, in Python's `GAMES` order (valley.py:59). The order is
-/// load-bearing: [`ValleyHub::on_disconnect`] leaves the lobbies in it, and
-/// `protocol::arena_info` emits the welcome's `games` keys in it (visible only
-/// because serde_json's `preserve_order` is on, Cargo.toml:16).
-pub const GAMES: [&str; 13] = [
-    "pond", "race", "duel", "mines", "farm", "golf", "kart", "plat", "fps", "hq", "type", "td",
-    "bowl",
+/// Every Valley game, in Python's `GAMES` order (valley.py:60) with the
+/// Rust-first td/bowl appended (the frozen Python never learned them). The
+/// order is load-bearing: [`ValleyHub::on_disconnect`] leaves the lobbies in
+/// it, and `protocol::arena_info` emits the welcome's `games` keys in it
+/// (visible only because serde_json's `preserve_order` is on, Cargo.toml:16).
+pub const GAMES: [&str; 14] = [
+    "pond", "race", "duel", "mines", "farm", "golf", "kart", "plat", "fps", "strike", "hq", "type",
+    "td", "bowl",
 ];
 
-/// Python's `GAME_NAMES` (valley.py:73), in [`GAMES`] order. The human name in
+/// Python's `GAME_NAMES` (valley.py:74), in [`GAMES`] order. The human name in
 /// every `lobby` and `invite` event.
-pub const GAME_NAMES: [&str; 13] = [
+pub const GAME_NAMES: [&str; 14] = [
     "Fishing Pond", "Puzzle Race", "Creature Duel", "Co-op Mines", "Shared Farm", "Mini Golf",
-    "Kart Racing", "Platformer Rush", "Blaster Arena", "HQ", "Code Typing Race", "Tower Defense",
-    "Bowling",
+    "Kart Racing", "Platformer Rush", "Blaster Arena", "Strikezone", "HQ", "Code Typing Race",
+    "Tower Defense", "Bowling",
 ];
 
 /// The eight games of [`GAMES`] this hub routes. kart, plat and fps keep their
@@ -187,12 +188,14 @@ pub const I_PLAT: usize = 7;
 #[allow(dead_code)]
 pub const I_FPS: usize = 8;
 #[allow(dead_code)]
-pub const I_HQ: usize = 9;
+pub const I_STRIKE: usize = 9;
 #[allow(dead_code)]
-pub const I_TYPE: usize = 10;
-pub const I_TD: usize = 11;
+pub const I_HQ: usize = 10;
 #[allow(dead_code)]
-pub const I_BOWL: usize = 12;
+pub const I_TYPE: usize = 11;
+pub const I_TD: usize = 12;
+#[allow(dead_code)]
+pub const I_BOWL: usize = 13;
 
 /// [`GAMES`] position of `g`, or None for a game this Valley does not define --
 /// Python's `g not in GAMES` test.
@@ -247,6 +250,9 @@ pub fn cap(g: &str, room_id: &str) -> usize {
         td::MAX_PLAYERS
     } else if g == bowling::GAME {
         8
+    } else if g == crate::strike::GAME {
+        // 5v5 needs all ten seats in one lobby (bots don't take lobby slots)
+        crate::strike::MAX_PLAYERS
     } else {
         MAX_LOBBY
     }
@@ -804,7 +810,7 @@ pub struct RoomValley {
     /// future engine that needs its own room id will look here first.
     #[allow(dead_code)]
     pub room_id: String,
-    pub lobbies: [Lobby; 13],
+    pub lobbies: [Lobby; 14],
     // Python's `RoomValley.__init__` order (valley.py:305-314), minus kart,
     // plat and fps, which their own hubs still hold.
     pub pond: pond::Pond,
@@ -1750,10 +1756,12 @@ mod tests {
 
     #[test]
     fn the_catalogs_are_pythons_in_pythons_order() {
-        // valley.py:59 and :73, byte for byte and in order.
+        // valley.py:60 and :74, byte for byte and in order; td and bowl are
+        // Rust-first (never ported back to the frozen Python) and sit at the end.
         assert_eq!(GAMES,
-                   ["pond", "race", "duel", "mines", "farm", "golf", "kart", "plat", "fps", "hq",
-                    "type", "td", "bowl"]);
+                   ["pond", "race", "duel", "mines", "farm", "golf", "kart", "plat", "fps",
+                    "strike", "hq", "type", "td", "bowl"]);
+        assert_eq!(game_name("strike"), "Strikezone");
         assert_eq!(game_name("td"), "Tower Defense");
         assert_eq!(game_name("bowl"), "Bowling");
         assert_eq!(cap("td", "r"), 4);
@@ -1778,7 +1786,7 @@ mod tests {
     fn the_lobby_indexes_match_the_games_table() {
         for (i, g) in [(I_POND, "pond"), (I_RACE, "race"), (I_DUEL, "duel"), (I_MINES, "mines"),
                        (I_FARM, "farm"), (I_GOLF, "golf"), (I_KART, "kart"), (I_PLAT, "plat"),
-                       (I_FPS, "fps"), (I_HQ, "hq"), (I_TYPE, "type"),
+                       (I_FPS, "fps"), (I_STRIKE, "strike"), (I_HQ, "hq"), (I_TYPE, "type"),
                        (I_TD, "td"), (I_BOWL, "bowl")] {
             assert_eq!(GAMES[i], g);
             assert_eq!(game_index(g), Some(i));

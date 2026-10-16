@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 2.5.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 2.5.2** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -330,6 +330,20 @@ and feature guide.
 
 ## Changelog
 
+- **Unreleased (2.5.2): the Overflow Vial.** A creature that is already Apex keeps earning past
+  70 prompts, and HQ now banks half of that surplus (5 XP per prompt) into a shared local ledger
+  (`vial.json`, 0600). Each drop dies 24 h after it lands, spends eat the soonest-to-die drop
+  first, and one spend lifts a species a single stage — Egg→Hatchling 30 XP, Hatchling→Adult 90,
+  Adult→Prime 180, Prime→Apex 400 — from a Village troop card or a caught Pokédex card (a caught
+  species can be lifted even with no live session). The Village Vial chip shows a live countdown
+  to the next expiring drop and opens a breakdown: lifetime poured per Apex creature and every
+  live drop with its own fuse; a fully evolved session's drawer shows what it poured. The stage
+  floor itself is the existing New Game+ `DEX_MAX` high-water, so the effect stays purely local;
+  the ledger only mutates locally and never leaves the machine. Army Camp now lists every troop
+  instead of the top 30 by power so a 0/1-prompt creature isn't scrolled out of reach, and
+  payload sessions with zero prompts are no longer dropped (a creature you see in the Pokédex is
+  always reachable to lift).
+
 - **Unreleased: Arena City garages and a skatepark.** Every HQ has a garage in its own colours with a
   drivable car, a motorbike and a bicycle (E; motor vehicles have an accelerator and a handbrake). The
   plaza has a skatepark: two quarter pipes, a fun box, a ledge and a rail, a row of boards to step on,
@@ -352,6 +366,23 @@ and feature guide.
   A settings view in the notch (gear icon): **2D / 3D / Match HQ** sprites (3D shows Mega forms at Apex),
   sounds, idle sessions and notch approvals.
 
+- **2.5.1** — **Strikezone.** A new team shooter in the Arena (Valley, game `strike`), separate from
+  Blaster Arena (which is untouched):
+  - **Teams, not free-for-all**: amber vs cyan. Before a match the host picks the side size
+    (2 vs 2, 3 vs 3 or 4 vs 4); when a side is short of players the Arena server fills it with
+    **bots** that patrol the dock, chase, aim with human-like error and shoot — they retire as
+    humans join. Team-mates can't hit each other; the team score is any member's kill.
+  - **A new map — Harbor Dockyard**: tight container lanes, a central warehouse with a doorway
+    chokepoint, catwalks along the walls reached by step-chains, crates and health/ammo pickups.
+    Not an open field: three lanes, rotation-friendly.
+  - **Same proven netcode** as Blaster Arena (client prediction, 20 Hz server tick, lag-compensated
+    shots), plus: `~` (or right-click / LT) **scopes in** — camera zoom with a steadier sight, no
+    spread change (nothing desyncs); a graphics quality switch (Classic / Balanced / Ultra) with
+    PBR materials, soft shadows, tone mapping, a gradient sky and glowing container-edge accents.
+  - **Privacy / egress.** Bots are server-side only and use the same movement and hit adjudication
+    as everyone else; game sockets carry moves and scores only — nothing transcript-derived is
+    involved. The map loads from your own dashboard (127.0.0.1); no third-party assets (the arena
+    reuses the Kenney CC0 kit already vendored in `games/fps/` and `games/golf/`).
 - **2.5.0** — **Make + compete.** Build your own maps, share them, and compete on them every week.
   - **Track Editor**: paint a kart loop on a grid, see a live check, test-drive it, save it and race it
     with friends (Kart Racing gains a "Custom…" track picker).

@@ -13,6 +13,7 @@ mod crews;
 mod cups;
 mod db;
 mod fps;
+mod strike;
 mod hq;
 mod kart;
 mod loot;
@@ -73,6 +74,7 @@ pub(crate) struct AppState {
     pub(crate) kart: kart::KartHub,
     pub(crate) plat: platformer::PlatHub,
     pub(crate) fps: fps::FpsHub,
+    pub(crate) strike: strike::StrikeHub,
     /// The other eight Valley games plus Party Mode, behind one dispatcher.
     pub(crate) valley: valley::ValleyHub,
     /// Now Playing and listen-along rooms (memory only).
@@ -538,6 +540,9 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
                 Some("game") if v.get("g").and_then(|g| g.as_str()) == Some(fps::GAME) => {
                     arena.handle(&rid, conn_id, &me, &v).await
                 }
+                Some("game") if v.get("g").and_then(|g| g.as_str()) == Some(strike::GAME) => {
+                    arena.handle(&rid, conn_id, &me, &v).await
+                }
                 // A directed "come look at the Arena" ping. Carries no URL and no
                 // command by design -- only who it is from and a short note -- so a
                 // nudge can never make the recipient's machine open or do anything.
@@ -623,6 +628,7 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
     st.kart.on_disconnect(&room_id, conn_id, &member).await;
     st.plat.on_disconnect(&room_id, conn_id, &member).await;
     st.fps.on_disconnect(&room_id, conn_id, &member).await;
+    st.strike.on_disconnect(&room_id, conn_id, &member).await;
     st.valley.on_disconnect(&room_id, conn_id, &member).await;
     st.rooms.leave(&room_id, conn_id).await;
 }
@@ -839,6 +845,7 @@ async fn serve() -> anyhow::Result<()> {
     let kart = kart::KartHub::new(rooms.clone(), registry.clone(), clock.clone(), rec.clone());
     let plat = platformer::PlatHub::new(rooms.clone(), registry.clone(), clock.clone(), rec.clone());
     let fps = fps::FpsHub::new(rooms.clone(), registry.clone(), clock.clone(), rec.clone());
+    let strike = strike::StrikeHub::new(rooms.clone(), registry.clone(), clock.clone(), rec.clone());
     // Some(pool): the farm is the only Valley game that persists anything, and
     // with None it would run and silently forget every seed, plant and harvest.
     let valley = valley::ValleyHub::new(
@@ -852,6 +859,7 @@ async fn serve() -> anyhow::Result<()> {
         kart,
         plat,
         fps,
+        strike,
         valley,
         music: music::MusicHub::default(),
         conn_seq: Arc::new(AtomicU64::new(1)),

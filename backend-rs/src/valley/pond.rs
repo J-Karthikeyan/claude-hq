@@ -347,7 +347,7 @@ impl Pond {
         let tok = msg.get("token").and_then(Value::as_str);
         // Python's one condition: `not c or msg.get("token") != c["token"]`. A
         // non-string token cannot equal the stored one, so it lands here too.
-        if !self.casts.get(cx.uid()).is_some_and(|c| tok == Some(c.token.as_str())) {
+        if self.casts.get(cx.uid()).is_none_or(|c| tok != Some(c.token.as_str())) {
             out.err(cx.conn, "no such cast");
             return;
         }

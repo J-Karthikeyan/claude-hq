@@ -47,3 +47,7 @@ loot-state.json.tmp
 
 # HQ Notch build output
 notch/.build/
+
+# Overflow Vial live ledger (mutates every payload build)
+vial.json
+vial.json.tmp

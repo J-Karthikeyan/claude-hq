@@ -261,7 +261,7 @@ async def main():
         # on: a game missing from it makes the page say "This Arena doesn't run
         # <game> yet", however well the engine works.
         GAMES = ["pond", "race", "duel", "mines", "farm", "golf", "kart", "plat",
-                 "fps", "hq", "type"]
+                 "fps", "strike", "hq", "type"]
         # Refereed only by the Rust Arena (HQ 2.5): left out of the order check
         # and the per-game join loop, so both Arenas still compare equal.
         RUST_ONLY = ("td", "bowl")
@@ -269,7 +269,7 @@ async def main():
         # From valley.py:1036-1076. race answers only when a round is already
         # running, so it has none on a fresh join.
         SNAP = {"pond": "pond", "duel": "duel", "mines": "mines", "farm": "farm",
-                "golf": "golf", "kart": "kart", "plat": "plat", "fps": "fps",
+                "golf": "golf", "kart": "kart", "plat": "plat", "fps": "fps", "strike": "strike",
                 "hq": "snap", "type": "type", "race": None}
 
         k4 = await ticket(t1)

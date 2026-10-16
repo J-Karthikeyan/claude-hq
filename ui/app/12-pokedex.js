@@ -186,6 +186,11 @@ function buildDexCard(sp,i,cr){
       var openIt=function(){ openSession(sp.exampleSessionId,{title:sp.species||sp.name,creature:cr}); };
       card.addEventListener("click",openIt);
       card.addEventListener("keydown",function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); openIt(); } });
+      // Overflow Vial: a dex-caught species can be lifted even when no chat for it is live
+      var vial=(typeof STATE!=="undefined"&&STATE&&STATE.vial)||{}, vxp=(vial.xp|0);
+      var vb=vialLiftBtn({exampleSessionId:sp.exampleSessionId, species:sp, sessions:(STATE.sessions||[]),
+                          title:sp.species||sp.name, creature:cr}, cr, vxp, vial);
+      if(vb) card.appendChild(vb);
     }
     return card;
 }

@@ -472,10 +472,17 @@
         <div class="vil-res-item" title="Gold — total spend"><span class="vil-res-ic gold">◈</span><div><b id="vilGold">0</b><span>Gold</span></div></div>
         <div class="vil-res-item" title="Mana — output tokens today"><span class="vil-res-ic mana">✧</span><div><b id="vilMana">0</b><span>Mana</span></div></div>
         <div class="vil-res-item" title="Ember — lifetime prompts"><span class="vil-res-ic ember">✦</span><div><b id="vilEmber">0</b><span>Ember</span></div></div>
+        <div class="vil-res-item vial-click" id="vilVialItem" role="button" tabindex="0" title="Overflow Vial — half the XP your Apex creatures keep earning, banked for 24 h. Spend it from a troop or Pokédex card to lift that species one stage. Click for the breakdown." aria-expanded="false"><span class="vil-res-ic vial">⚗</span><div><b id="vilVial">0</b><span>Vial</span></div></div>
       </div>
       <button class="hbtn primary" id="vilRaid" type="button">⚔ Muster &amp; Raid</button>
     </div>
     <div class="vil-xpbar"><div class="vil-xpfill" id="vilXP"></div><span class="vil-xptext" id="vilXPtext"></span></div>
+    <!-- Overflow Vial breakdown: which creatures poured · live drops with their fuse -->
+    <div id="vilVialPanel" class="vil-vial-panel" hidden aria-hidden="true">
+      <div class="vil-vial-hd"><b>⚗ Overflow Vial</b><button class="hbtn small" id="vilVialX" type="button" aria-label="Close the vial breakdown">✕</button></div>
+      <div id="vilVialBody"></div>
+      <div class="vil-vial-note">Live drops each die 24 h after they landed; a spend takes the soonest-to-die drop first.</div>
+    </div>
 
     <section class="panel vil-sec" aria-label="Army camp">
       <h3 class="section-h"><svg class="i" aria-hidden="true"><use href="#i-swords"/></svg>Army Camp <span class="muted" id="vilArmySub"></span></h3>

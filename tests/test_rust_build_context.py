@@ -66,7 +66,7 @@ class RustBuildContext(unittest.TestCase):
     def test_the_games_data_still_lives_in_the_python_tree(self):
         """A cutover note, pinned so it is not forgotten.
 
-        Five games read their data out of backend/app at COMPILE time, which is
+        Six games read their data out of backend/app at COMPILE time, which is
         deliberate -- one copy, shared with the Python Arena, so the two can
         never disagree about a track or a creature. It also means deleting
         backend/ stops the Rust Arena from BUILDING. Those files move into
@@ -80,6 +80,7 @@ class RustBuildContext(unittest.TestCase):
             "backend/app/golf_courses.json",
             "backend/app/kart_tracks.json",
             "backend/app/platformer_levels.json",
+            "backend/app/strike_map.json",
         ])
 
 
