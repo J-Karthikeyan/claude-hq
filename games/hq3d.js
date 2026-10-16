@@ -738,6 +738,43 @@ function mount(el, api){
       if(d < 1.7 && d < bd){ bd = d; best = i; } });
     return best;
   }
+  /* Skate poses, built from the rig's bones (the characters have no trick clips): a crouch
+     (legs bent; your own rider also sits lower), arms out for balance, and the torso twisting into a spin.
+     pose = {crouch 0..1, arms 0..1, twist (rad)}. Last frame's offsets are taken back before
+     the mixer runs, so nothing accumulates whether or not a clip drives that bone. */
+  function poseBones(ch){
+    if(!ch || ch._pb === false) return null;
+    if(!ch._pb){
+      var b = {la: ch.o.getObjectByName("arm-left"), ra: ch.o.getObjectByName("arm-right"), t: ch.o.getObjectByName("torso"),
+               ll: ch.o.getObjectByName("leg-left"), rl: ch.o.getObjectByName("leg-right")};
+      ch._pb = b.la && b.ra && b.t && b.ll && b.rl ? b : false;
+      if(!ch._pb) return null;
+      ch._po = {la: 0, ra: 0, t: 0, l: 0};
+    }
+    return ch._pb;
+  }
+  function poseUndo(ch){
+    var b = poseBones(ch), o = ch && ch._po; if(!b || !o) return;
+    b.la.rotation.z -= o.la; b.ra.rotation.z -= o.ra; b.t.rotation.y -= o.t;
+    b.ll.rotation.x -= o.l; b.rl.rotation.x -= o.l;
+    ch._po = {la: 0, ra: 0, t: 0, l: 0};
+  }
+  function poseApply(ch, pose){
+    var b = poseBones(ch); if(!b || !pose) return;
+    var o = {la: pose.arms*1.25, ra: -pose.arms*1.25, t: pose.twist || 0, l: -pose.crouch*0.7};
+    b.la.rotation.z += o.la; b.ra.rotation.z += o.ra; b.t.rotation.y += o.t;
+    b.ll.rotation.x += o.l; b.rl.rotation.x += o.l;
+    ch._po = o;
+  }
+  // the pose for a skater, from the sim's state (yours) or from a trick id k (someone else's)
+  function skatePoseOf(k, air, crouchT){
+    var K = HQV.hqSkateSim ? HQV.hqSkateSim.K : {};
+    if(k === K.bail) return {crouch: 0.2, arms: 0.9, twist: 0};
+    if(k === K.grind) return {crouch: 0.45, arms: 1, twist: 0};
+    var crouch = air ? 0.85 : Math.max(0.15, crouchT > 0 ? 0.8 : 0.15);
+    return {crouch: crouch, arms: air ? 0.45 : 0.15, twist: k === K.spin ? 0.35 : 0};
+  }
+
   // on a board you stand side-on, knees bent a little
   function standSkater(ch, on){
     if(!ch) return;
@@ -845,7 +882,12 @@ function mount(el, api){
       ollie: k.Space && !pv.Space, flip: k.KeyF && !pv.KeyF, shove: k.KeyG && !pv.KeyG};
     sk.prev = {Space: k.Space, KeyF: k.KeyF, KeyG: k.KeyG};
     walkTo = null; walkDoor = null;
+    var wasAir = st.air;
     var evs = Sim.step(st, inp, dt, function(x, z){ return blocked(x + sk.cx, z + sk.cz); });
+    // a quick crouch: winding up the pop, and soaking up a landing
+    sk.crouch = Math.max(0, (sk.crouch || 0) - dt);
+    if(inp.ollie || (wasAir && !st.air)) sk.crouch = 0.16;
+    sk.pose = E.calm() ? null : skatePoseOf(Sim.kOf(st), st.air, sk.crouch);
     evs.forEach(skateEvent);
     avatar.x = st.x + sk.cx; avatar.z = st.z + sk.cz; avatar.yaw = st.yaw;
     avatar.g.position.set(avatar.x, st.y, avatar.z); avatar.g.rotation.y = avatar.yaw;
@@ -856,7 +898,7 @@ function mount(el, api){
     B.deck.rotation.y = calm ? 0 : st.shove*PI;
     ride.lean.rotation.x = st.bail > 0 && !calm ? -0.5 : 0;
     if(avatar.ch){
-      avatar.ch.o.position.y = 0.13 - (st.air ? 0.12 : 0);                 // tuck in the air
+      avatar.ch.o.position.y = 0.13 - (sk.pose ? sk.pose.crouch*0.12 : 0);   // lower as the knees bend (poseApply bends them)
       setAnim(avatar.ch, st.bail > 0 ? "sit" : inp.push && !st.air && !st.grind ? "walk" : "idle", inp.push ? 0.8 : 1);
     }
     B.wheels.forEach(function(w){ w.rotation.x += st.speed*dt/0.03; });
@@ -876,6 +918,7 @@ function mount(el, api){
       E.sfx(e.best ? "finish" : "coin");
       if(e.best){ try { localStorage.setItem(SKATE_BEST, String(e.total)); } catch(x){} }
       if(api.announce) api.announce(e.names.join(", ") + ". " + e.total + " points" + (e.best ? ", a new best." : "."));
+      if(api.skateCombo) api.skateCombo({total: e.total, tricks: e.mult});   // the page may put it on the week's board
     }
   }
   // the skate HUD over the scene: the hint line, the running combo, your best, and popups
@@ -1090,7 +1133,12 @@ function mount(el, api){
     rideUiSync(false);
     var ease = 1 - Math.exp(-dt*4); view.target.lerp(view.goal, ease);
     resize(); placeCam();
-    if(avatar && avatar.ch){ avatar.ch.mixer.update(dt); if(avatar.ch.update) avatar.ch.update(t); }
+    if(avatar && avatar.ch){
+      var skp = ride && ride.kind === "skate" && ride.sk ? ride.sk.pose : null;
+      if(skp || avatar.ch._po) poseUndo(avatar.ch);
+      avatar.ch.mixer.update(dt); if(avatar.ch.update) avatar.ch.update(t);
+      if(skp) poseApply(avatar.ch, skp);                               // Calm: no pose (skp is null)
+    }
     placePeers(dt, t);
     acc.sky += dt; if(acc.sky > 30){ acc.sky = 0; applyTime(); }
     if(cur !== worlds.mission){ if(cur.update) cur.update(t, dt, k); renderer.render(cur.scene, cam); return; }
@@ -1171,6 +1219,9 @@ function mount(el, api){
     });
     Object.keys(peers).forEach(function(u){ if(!seen[u]){ var P = peers[u]; if(P.g.parent) P.g.parent.remove(P.g); delete peers[u]; } });
   };
+  // what another player is on, from their presence `a`, and how they sit on it
+  var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto"};
+  var PEER_SEAT = {bike: seatRider, car: seatDriver, moto: seatMoto};
   function placePeers(dt, t){
     Object.keys(peers).forEach(function(u){
       var P = peers[u], here = cur && P.w === cur.name;
@@ -1180,12 +1231,12 @@ function mount(el, api){
       P.x = jump ? P.tx : P.x + (P.tx - P.x)*k; P.z = jump ? P.tz : P.z + (P.tz - P.z)*k;
       P.yaw = E.angLerp(P.yaw, P.tyaw, k);
       P.g.position.set(P.x, 0, P.z); P.g.rotation.y = P.yaw;
-      var rides = P.a === 3, skates = P.a === 4;
+      var skates = P.a === 4;
       // on a board: stood on it side-on, lifted to the height they send, the trick they send played here
-      if(skates && !P.board){ if(P.bike){ if(P.ch) P.g.add(P.ch.o); P.g.remove(P.lean); P.bike = null; }
+      if(skates && !P.board){ if(P.bike){ if(P.ch) P.g.add(P.ch.o); P.g.remove(P.lean); P.bike = null; P.vkind = null; }
         P.lean = new THREE.Group(); P.g.add(P.lean); P.board = boardModel(bikeColor(u)); P.lean.add(P.board.g);
         if(P.ch){ P.lean.add(P.ch.o); standSkater(P.ch, true); } }
-      else if(!skates && P.board){ if(P.ch){ P.g.add(P.ch.o); standSkater(P.ch, false); } P.g.remove(P.lean); P.board = null; P.lean = null; P.gy = 0; }
+      else if(!skates && P.board){ if(P.ch){ poseUndo(P.ch); P.g.add(P.ch.o); standSkater(P.ch, false); } P.g.remove(P.lean); P.board = null; P.lean = null; P.gy = 0; }
       if(P.board){
         if(P.ch && P.ch.o.parent !== P.lean){ P.lean.add(P.ch.o); standSkater(P.ch, true); }
         var K = HQV.hqSkateSim ? HQV.hqSkateSim.K : {}, calm = E.calm(), tk = (t || 0)*1000;
@@ -1195,22 +1246,34 @@ function mount(el, api){
         P.lean.rotation.y = !calm && P.k === K.spin ? (tk/840 % 1)*PI*2 : 0;
         P.lean.rotation.x = P.k === K.bail && !calm ? -0.5 : 0;
         P.px = P.x; P.pz = P.z;
-        if(P.ch){ setAnim(P.ch, P.k === K.bail ? "sit" : "idle"); P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0); }
+        if(P.ch){
+          setAnim(P.ch, P.k === K.bail ? "sit" : "idle");
+          poseUndo(P.ch); P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0);
+          if(!calm) poseApply(P.ch, skatePoseOf(P.k, (P.y || 0) > 1 && P.k !== K.grind, 0));
+        }
         return;
       }
-      if(rides && !P.bike){ P.lean = new THREE.Group(); P.g.add(P.lean); P.bike = bikeModel(bikeColor(u)); P.lean.add(P.bike.g); if(P.ch) P.lean.add(P.ch.o); seatRider(P.ch, true); }
-      else if(!rides && P.bike){ if(P.ch){ P.g.add(P.ch.o); seatRider(P.ch, false); } P.g.remove(P.lean); P.bike = null; P.lean = null; }
+      // on wheels: a bike (3), a car (5) or a motorbike (6), in their colour, them in its seat
+      var vk = PEER_VEHICLE[P.a] || null;
+      if(P.bike && P.vkind !== vk){ if(P.ch){ P.g.add(P.ch.o); PEER_SEAT[P.vkind](P.ch, false); } P.g.remove(P.lean); P.bike = null; P.lean = null; P.vkind = null; }
+      if(vk && !P.bike){
+        P.lean = new THREE.Group(); P.g.add(P.lean); P.vkind = vk;
+        P.bike = vk === "car" ? carModel(bikeColor(u), 0x2a3c50) : vk === "moto" ? motoModel(bikeColor(u)) : bikeModel(bikeColor(u));
+        P.lean.add(P.bike.g); if(P.ch){ P.lean.add(P.ch.o); PEER_SEAT[vk](P.ch, true); }
+      }
       if(P.bike){
-        if(P.ch && P.ch.o.parent !== P.lean){ P.lean.add(P.ch.o); seatRider(P.ch, true); }   // the character loaded after they got on
+        if(P.ch && P.ch.o.parent !== P.lean){ P.lean.add(P.ch.o); PEER_SEAT[vk](P.ch, true); }   // the character loaded after they got on
         var mv = Math.hypot(P.x - (P.px == null ? P.x : P.px), P.z - (P.pz == null ? P.z : P.pz));
-        bikeRoll(P.bike, jump ? 0 : mv, null);
+        (vk === "car" ? carRoll : vk === "moto" ? motoRoll : bikeRoll)(P.bike, jump ? 0 : mv, null);
       }
       P.px = P.x; P.pz = P.z;
-      if(P.ch){ setAnim(P.ch, rides ? "sit" : P.a === 2 ? "sprint" : P.a === 1 ? "walk" : "idle"); P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0); }
+      if(P.ch){ setAnim(P.ch, vk ? "sit" : P.a === 2 ? "sprint" : P.a === 1 ? "walk" : "idle"); P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0); }
     });
   }
-  // 0 still, 1 walk, 2 run, 3 on a bike (any speed: others draw you riding), 4 on a skateboard.
-  inst.moving = function(){ return ride ? (ride.kind === "skate" ? 4 : 3) : keyMove ? (keyRun ? 2 : 1) : 0; };
+  // 0 still, 1 walk, 2 run, 3 on a bike (any speed: others draw you riding), 4 on a skateboard,
+  // 5 driving a car, 6 on a motorbike (the page sends 5 / 6 only where the Arena lists "drive").
+  var RIDE_A = {bike: 3, skate: 4, car: 5, moto: 6};
+  inst.moving = function(){ return ride ? (RIDE_A[ride.kind] || 3) : keyMove ? (keyRun ? 2 : 1) : 0; };
   // on a board: what others should see you doing ({k, y}); null otherwise
   inst.skate = function(){ return ride && ride.kind === "skate" ? skateNet() : null; };
   inst.riding = function(){ return !!ride; };

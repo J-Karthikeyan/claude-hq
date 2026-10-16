@@ -59,7 +59,7 @@ import worksignals
 # optional start(ctx)). Each import is guarded so one broken module never takes
 # the HQ down.
 EXT = []
-for _ext_name in ("ext_skills", "ext_loot", "ext_prestige", "ext_maps", "ext_cups", "ext_boss"):
+for _ext_name in ("ext_skills", "ext_loot", "ext_prestige", "ext_maps", "ext_cups", "ext_boss", "ext_skate"):
     try:
         EXT.append(__import__(_ext_name))
     except Exception:
