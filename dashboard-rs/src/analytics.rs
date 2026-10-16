@@ -25,22 +25,18 @@ pub struct SearchEntry {
     pub title: String,
     pub folder: String,
     pub last_activity: String,
-    pub text: Vec<char>,
+    pub text: String,
     pub blob: String,
     pub cursor: bool,
 }
 
-fn read_text(path: &Path) -> Option<String> {
-    std::fs::read(path).ok().map(|b| String::from_utf8_lossy(&b).into_owned())
-}
-
 fn build_claude_search_entry(path: &Path) -> Option<SearchEntry> {
-    let text = read_text(path)?;
+    let recs = scan::open_records(path)?;
     let mut title: Option<String> = None;
     let mut last: Option<py::Dt> = None;
     let mut parts: Vec<String> = Vec::new();
     let mut total = 0usize;
-    for (_line, rec) in scan::records(&text) {
+    for (_line, rec) in recs {
         let o = rec.as_object().unwrap();
         let _ = (|| -> Option<()> {
             let ts = o.get("timestamp").and_then(|v| v.as_str()).and_then(py::parse_iso_utc);
@@ -112,18 +108,18 @@ fn build_claude_search_entry(path: &Path) -> Option<SearchEntry> {
         folder: scan::parent_name(path),
         last_activity: last.map(|d| py::iso(&d)).unwrap_or_default(),
         blob: text.to_lowercase(),
-        text: text.chars().collect(),
+        text,
         cursor: false,
     })
 }
 
 fn build_cursor_search_entry(path: &Path) -> Option<SearchEntry> {
-    let text = read_text(path)?;
+    let recs = scan::open_records(path)?;
     let mut title: Option<String> = None;
     let mut last: Option<py::Dt> = None;
     let mut parts: Vec<String> = Vec::new();
     let mut total = 0usize;
-    for (_line, rec) in scan::records(&text) {
+    for (_line, rec) in recs {
         let o = rec.as_object().unwrap();
         match o.get("role").and_then(|v| v.as_str()) {
             Some("user") => {
@@ -183,20 +179,22 @@ fn build_cursor_search_entry(path: &Path) -> Option<SearchEntry> {
         folder: scan::cursor_project_slug(path),
         last_activity: last.map(|d| py::iso(&d)).unwrap_or_default(),
         blob: text.to_lowercase(),
-        text: text.chars().collect(),
+        text,
         cursor: true,
     })
 }
 
-fn snippet_around(text: &[char], idx: usize, term_len: usize) -> String {
+/// The text around char index `idx`, like dashboard._snippet_around.
+fn snippet_around(text: &str, idx: usize, term_len: usize) -> String {
+    let len = py::char_len(text);
     let start = idx.saturating_sub(70);
-    let end = (idx + term_len + 90).min(text.len());
-    let slice: String = text[start.min(end)..end].iter().collect();
+    let end = (idx + term_len + 90).min(len);
+    let slice = py::char_slice(text, start.min(end), end);
     let mut snip = py::strip(&scan::WS_RUN_RE.replace_all(&slice, " ")).to_string();
     if start > 0 {
         snip = format!("…{}", snip);
     }
-    if end < text.len() {
+    if end < len {
         snip.push('…');
     }
     snip
@@ -600,8 +598,8 @@ impl App {
     fn digest_range_detail(&self, path: &Path, days: &HashSet<String>) -> (Option<String>, Option<String>, Vec<String>) {
         let (mut first, mut last, mut files) = (None, None, Vec::new());
         let mut seen: HashSet<String> = HashSet::new();
-        let Some(text) = read_text(path) else { return (first, last, files) };
-        for (_line, rec) in scan::records(&text) {
+        let Some(recs) = scan::open_records(path) else { return (first, last, files) };
+        for (_line, rec) in recs {
             let o = rec.as_object().unwrap();
             let _ = (|| -> Option<()> {
                 let ts = o.get("timestamp").and_then(|v| v.as_str()).and_then(py::parse_iso_utc)?;
@@ -923,9 +921,9 @@ fn ev(i: usize, t: &str, role: &str, text: &str, tool: Option<&str>) -> Value {
 
 fn claude_events(path: &Path) -> Vec<Value> {
     let mut events = Vec::new();
-    let Some(text) = read_text(path) else { return events };
+    let Some(recs) = scan::open_records(path) else { return events };
     let mut i = 0usize;
-    for (_line, rec) in scan::records(&text) {
+    for (_line, rec) in recs {
         let o = rec.as_object().unwrap();
         let _ = (|| -> Option<()> {
             let ts = o.get("timestamp").and_then(|v| v.as_str()).and_then(py::parse_iso_utc);
@@ -1009,14 +1007,14 @@ fn claude_events(path: &Path) -> Vec<Value> {
 
 fn cursor_events(path: &Path) -> Vec<Value> {
     let mut events: Vec<Value> = Vec::new();
-    let Some(text) = read_text(path) else { return events };
+    let Some(recs) = scan::open_records(path) else { return events };
     let mut turn_ts: Option<py::Dt> = None;
     let mut pending: Vec<(String, String, Option<String>)> = Vec::new();
     let add = |events: &mut Vec<Value>, ts: Option<py::Dt>, role: &str, text: &str, tool: Option<&str>| {
         let n = events.len();
         events.push(ev(n, &ts.map(|d| py::iso(&d)).unwrap_or_default(), role, text, tool));
     };
-    for (_line, rec) in scan::records(&text) {
+    for (_line, rec) in recs {
         let o = rec.as_object().unwrap();
         let mut emit = |events: &mut Vec<Value>, ts: Option<py::Dt>, role: &str, text: String, tool: Option<String>| {
             if let Some(ts) = ts {

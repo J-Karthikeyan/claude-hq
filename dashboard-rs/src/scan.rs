@@ -370,22 +370,46 @@ pub fn empty_tokens() -> Value {
     json!({"output": 0, "input": 0, "cacheRead": 0, "total": 0, "estCostUSD": 0.0, "model": ""})
 }
 
-fn read_text(path: &Path) -> Option<String> {
-    std::fs::read(path).ok().map(|b| String::from_utf8_lossy(&b).into_owned())
+/// The JSON-object records of a transcript, streamed line by line like
+/// dashboard.py's `for line in f` (universal newlines, UTF-8 with
+/// errors="replace", each line stripped; blank, unparsable and non-object
+/// lines skipped). Yields (stripped line, record).
+pub struct Records {
+    reader: std::io::BufReader<std::fs::File>,
+    buf: Vec<u8>,
+    pending: std::collections::VecDeque<String>,
 }
 
-/// Iterate the JSON-object records of a transcript, as dashboard.py does.
-pub fn records(text: &str) -> impl Iterator<Item = (&str, Value)> {
-    py::universal_lines(text).filter_map(|line| {
-        let line = py::strip(line);
-        if line.is_empty() {
-            return None;
+pub fn open_records(path: &Path) -> Option<Records> {
+    let f = std::fs::File::open(path).ok()?;
+    Some(Records { reader: std::io::BufReader::with_capacity(1 << 16, f), buf: Vec::new(), pending: Default::default() })
+}
+
+impl Iterator for Records {
+    type Item = (String, Value);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use std::io::BufRead;
+        loop {
+            if let Some(line) = self.pending.pop_front() {
+                let line = py::strip(&line);
+                if line.is_empty() {
+                    continue;
+                }
+                if let Ok(v @ Value::Object(_)) = serde_json::from_str::<Value>(line) {
+                    return Some((line.to_string(), v));
+                }
+                continue;
+            }
+            self.buf.clear();
+            match self.reader.read_until(b'\n', &mut self.buf) {
+                Ok(0) | Err(_) => return None,
+                Ok(_) => {}
+            }
+            let s = String::from_utf8_lossy(&self.buf);
+            self.pending.extend(py::universal_lines(&s).map(String::from));
         }
-        match serde_json::from_str::<Value>(line) {
-            Ok(v @ Value::Object(_)) => Some((line, v)),
-            _ => None,
-        }
-    })
+    }
 }
 
 fn basename(p: &Path) -> String {
@@ -455,7 +479,7 @@ pub fn scan_claude(path: &Path) -> Agg {
         last_busy: None,
         rest_until: None,
     };
-    let Some(text) = read_text(path) else { return cx.agg };
+    let Some(recs) = open_records(path) else { return cx.agg };
     let mut seen_links: IndexSet<String> = IndexSet::new();
     let mut seen_usage: IndexSet<String> = IndexSet::new();
     let mut last_assistant_text: Option<String> = None;
@@ -465,7 +489,7 @@ pub fn scan_claude(path: &Path) -> Agg {
     let mut turn_ended = true;
     let mut ws_state = WsState::default();
 
-    for (line, rec) in records(&text) {
+    for (line, rec) in recs {
         worksignals::observe(&rec, &mut cx.agg.ws_days, &mut ws_state);
         let o = obj(&rec).unwrap();
         // A closure so a record that would raise in Python stops here (`?`),
@@ -742,7 +766,7 @@ pub fn scan_claude(path: &Path) -> Agg {
                 }
                 _ => {
                     if line.contains("claude.ai") || line.contains("github.com") {
-                        extract_links(line, &mut cx.agg.links, &mut seen_links);
+                        extract_links(&line, &mut cx.agg.links, &mut seen_links);
                     }
                 }
             }
@@ -973,7 +997,7 @@ enum CursorAct {
 /// One Cursor agent transcript, in the same aggregate shape as Claude's.
 pub fn scan_cursor(path: &Path) -> Agg {
     let mut agg = Agg { folder: cursor_project_slug(path), cursor: true, ..Default::default() };
-    let Some(text) = read_text(path) else { return agg };
+    let Some(recs) = open_records(path) else { return agg };
     let mut seen_links: IndexSet<String> = IndexSet::new();
     let mut last_assistant_text: Option<String> = None;
     let mut last_assistant_tool: Option<Map<String, Value>> = None;
@@ -1034,7 +1058,7 @@ pub fn scan_cursor(path: &Path) -> Agg {
         }
     };
 
-    for (_line, rec) in records(&text) {
+    for (_line, rec) in recs {
         let o = rec.as_object().unwrap();
         let mut emit = |agg: &mut Agg, ts: Option<Dt>, act: CursorAct, last_text: &mut Option<String>| {
             if let Some(ts) = ts {
