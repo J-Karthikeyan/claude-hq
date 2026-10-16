@@ -13,6 +13,9 @@ public struct TickerItem: Equatable, Sendable, Identifiable {
     public var minus: Int?
     public var failed: Bool
     public var at: Date
+    /// What an edit changed (Edit / MultiEdit / Write / NotebookEdit), for the diff view. Kept
+    /// only while the item is on the ticker, which holds at most `SessionStore.tickerMax`.
+    public var diff: EditDiff? = nil
 }
 
 /// A permission or AskUserQuestion request waiting on the person (one open hook socket).
@@ -25,7 +28,10 @@ public struct PendingRequest: Equatable, Sendable, Identifiable {
     public var canAlways: Bool
     public var questions: [Question]
     public var at: Date
+    /// A plan waiting for approval (ExitPlanMode): its markdown text.
+    public var plan: String? = nil
     public var isQuestion: Bool { !questions.isEmpty }
+    public var isPlan: Bool { plan != nil }
 }
 
 public struct Session: Equatable, Sendable, Identifiable {
@@ -117,7 +123,7 @@ public struct SessionStore: Sendable {
             if let t = m.tool {
                 let item = TickerItem(id: (m.toolUseId ?? "").isEmpty ? UUID().uuidString : m.toolUseId!,
                                       tool: t.tool, target: t.target, plus: m.plus, minus: m.minus,
-                                      failed: m.event == "PostToolUseFailure", at: now)
+                                      failed: m.event == "PostToolUseFailure", at: now, diff: m.diff)
                 s.ticker.removeAll { $0.id == item.id }
                 s.ticker.insert(item, at: 0)
                 if s.ticker.count > Self.tickerMax { s.ticker.removeLast(s.ticker.count - Self.tickerMax) }
@@ -160,11 +166,12 @@ public struct SessionStore: Sendable {
         guard !m.sessionId.isEmpty else { return [] }
         let t = m.tool ?? .init(tool: "Tool", target: "")
         let qs = (m.question ?? false) ? Question.parse(m.toolInput) : []
+        let plan = t.tool == "ExitPlanMode" ? (m.toolInput?["plan"]?.string ?? "") : nil
         pending.append(PendingRequest(id: id, sessionId: m.sessionId, tool: t.tool, target: t.target,
                                       toolInput: m.toolInput, canAlways: m.canAlways ?? false,
-                                      questions: qs, at: now))
+                                      questions: qs, at: now, plan: plan))
         sessions[m.sessionId]?.status = .needs
-        sessions[m.sessionId]?.now = qs.isEmpty ? "Wants to run \(t.tool)" : "Has a question"
+        sessions[m.sessionId]?.now = plan != nil ? "Has a plan for you" : qs.isEmpty ? "Wants to run \(t.tool)" : "Has a question"
         return [.needsYou(sessionId: m.sessionId)]
     }
 
