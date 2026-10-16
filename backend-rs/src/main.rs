@@ -413,6 +413,7 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
     let games = st.kart.clone();
     let plat = st.plat.clone();
     let arena = st.fps.clone();
+    let strike = st.strike.clone();
     let valley = st.valley.clone();
     let music = st.music.clone();
     let mut inbound = tokio::spawn(async move {
@@ -541,7 +542,7 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
                     arena.handle(&rid, conn_id, &me, &v).await
                 }
                 Some("game") if v.get("g").and_then(|g| g.as_str()) == Some(strike::GAME) => {
-                    arena.handle(&rid, conn_id, &me, &v).await
+                    strike.handle(&rid, conn_id, &me, &v).await
                 }
                 // A directed "come look at the Arena" ping. Carries no URL and no
                 // command by design -- only who it is from and a short note -- so a
