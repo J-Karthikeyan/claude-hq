@@ -53,6 +53,31 @@ function layout(list){
     views: views.map(function(v, k){ return Object.assign(lot(cells[hs.length + k], VIEW_Z, VIEW_DEPTH/2 + 1.2), {v: v}); })};
 }
 HQV.hqCityLayout = layout;
+
+// What stands beside every HQ, in its lot's own frame (the door faces +z, the road is at z 11):
+// a small garage in front of the right wing with its door to the road, the HQ's car on the
+// drive in front of it, and the HQ's own bike by the front door (ridable, like the bike park's).
+// Clear of the tower, both wings and the path to the door; see tests/test_hq3d.py.
+var LOT_EXTRAS = {
+  garage: {x: 12.6, z: 6.4, w: 3.4, d: 3.6, h: 2.5},
+  car: {x: 12.6, z: 9.6, yaw: -Math.PI/2},          // nose to the road
+  bike: {x: -6.4, z: 5.2, yaw: 0}                   // facing the road
+};
+HQV.hqLotExtras = LOT_EXTRAS;
+// what you cannot walk through, in the lot's frame (the bike is not: you ride it)
+function lotExtraBlocked(x, z){
+  var G = LOT_EXTRAS.garage, K = LOT_EXTRAS.car;
+  if(Math.abs(x - G.x) < G.w/2 + 0.3 && Math.abs(z - G.z) < G.d/2 + 0.3) return true;
+  return Math.abs(x - K.x) < 0.75 && Math.abs(z - K.z) < 1.3;
+}
+HQV.hqLotExtraBlocked = lotExtraBlocked;
+// an HQ's own colours, read the way its building reads them (games/hqbase.js): paint and accent
+function lotColors(look){
+  look = look || {};
+  var hex = function(v, d){ return /^#[0-9a-f]{6}$/i.test(v || "") ? parseInt(v.slice(1), 16) : d; };
+  return {paint: hex(look.paint, 0x2a3c50), accent: hex(look.accent, 0xffb347)};
+}
+HQV.hqLotColors = lotColors;
 function nameOf(h){
   var s = h.look && typeof h.look.sign === "string" && h.look.sign.trim();
   return s || ((h.trainerName || h.displayName || h.handle || "Someone") + "'s HQ");
@@ -108,6 +133,43 @@ HQV.hqWorlds.city = function(c, w){
     sub.position.set(0, B.top() + 5.6, 0); g.add(sub);
     B.hits.forEach(function(o){ hits.push(o); }); B.doors.forEach(function(d){ doors.push(d); });
     L.B = B; L.H = B.top() + 2; L.fade = {g: B.g, on: false}; lotsB.push(B);
+    lotExtras(L, g, lotColors(h.look));
+  }
+  // the garage, car and bike beside an HQ, in its colours (LOT_EXTRAS); the bike joins w.bikes
+  function lotExtras(L, g, col){
+    var X = LOT_EXTRAS, G = X.garage, K = X.car, Bk = X.bike;
+    var wallM = mat(col.paint, {roughness: 0.8}), trimM = emis(col.accent, col.accent, 0.35), dark = mat(0x0b1218, {roughness: 0.95});
+    // the garage: three walls, a flat roof, a roller door half up over a dark inside
+    var gg = new THREE.Group(); gg.position.set(G.x, 0, G.z); g.add(gg);
+    box(G.w, 0.06, G.d, mat(0x55606b, {roughness: 0.9}), 0, 0.03, 0, gg);
+    box(G.w, G.h, 0.2, wallM, 0, G.h/2, -G.d/2 + 0.1, gg);
+    box(0.2, G.h, G.d, wallM, -G.w/2 + 0.1, G.h/2, 0, gg);
+    box(0.2, G.h, G.d, wallM, G.w/2 - 0.1, G.h/2, 0, gg);
+    box(G.w + 0.3, 0.18, G.d + 0.3, mat(0x3a4552, {roughness: 0.7}), 0, G.h + 0.09, 0, gg);
+    box(G.w + 0.3, 0.1, 0.06, trimM, 0, G.h - 0.02, G.d/2 + 0.16, gg);               // accent strip under the roof
+    box(G.w - 0.45, G.h - 0.1, 0.05, dark, 0, (G.h - 0.1)/2, G.d/2 - 0.35, gg);        // the dark inside
+    var slats = c.canvasTex(64, 64, function(gx){ gx.fillStyle = "#c9d1d9"; gx.fillRect(0, 0, 64, 64); gx.fillStyle = "rgba(0,0,0,.28)";
+      for(var y = 4; y < 64; y += 8) gx.fillRect(0, y, 64, 2); });
+    var door = new THREE.Mesh(new THREE.BoxGeometry(G.w - 0.4, G.h*0.48, 0.06), new THREE.MeshStandardMaterial({map: slats.t, roughness: 0.6, metalness: 0.3}));
+    door.position.set(0, G.h - G.h*0.24 - 0.08, G.d/2 - 0.08); door.castShadow = true; gg.add(door);
+    sph(0.09, emis(0xfff1d6, 0xffd9a0, 2), 0, G.h + 0.02, G.d/2 + 0.22, gg);
+    var gl = c.glow(0xffd9a0, 1.6, 0.7); gl.position.set(0, G.h - 0.1, G.d/2 + 0.4); gg.add(gl); lampGlows.push(gl);
+    // the drive, and the car on it: body in the HQ's accent, roof in its paint
+    var drive = new THREE.Mesh(new THREE.PlaneGeometry(G.w - 0.4, 3.0), mat(0x323a43, {roughness: 0.9}));
+    drive.rotation.x = -PI/2; drive.position.set(K.x, 0.03, K.z); drive.receiveShadow = true; g.add(drive);
+    var k = new THREE.Group(); k.position.set(K.x, 0, K.z); k.rotation.y = K.yaw; g.add(k);
+    box(1.9, 0.45, 0.95, mat(col.accent, {metalness: 0.6, roughness: 0.3}), 0, 0.42, 0, k);
+    box(1.0, 0.42, 0.85, mat(0x0b1622, {metalness: 0.6, roughness: 0.15}), -0.1, 0.82, 0, k);
+    box(1.02, 0.05, 0.87, mat(col.paint, {metalness: 0.5, roughness: 0.35}), -0.1, 1.05, 0, k);
+    var tyre = mat(0x111418, {roughness: 0.9});
+    [[0.6, 0.47], [0.6, -0.47], [-0.6, 0.47], [-0.6, -0.47]].forEach(function(p){
+      var wh = cyl(0.2, 0.2, 0.14, tyre, p[0], 0.2, p[1], k, 14); wh.rotation.x = PI/2; });
+    box(0.04, 0.1, 0.22, emis(0xfff6e0, 0xfff1c8, 1.2), 0.96, 0.46, 0.3, k); box(0.04, 0.1, 0.22, emis(0xfff6e0, 0xfff1c8, 1.2), 0.96, 0.46, -0.3, k);
+    box(0.04, 0.1, 0.22, emis(0x5a0d12, 0xff3344, 0.9), -0.96, 0.46, 0.3, k); box(0.04, 0.1, 0.22, emis(0x5a0d12, 0xff3344, 0.9), -0.96, 0.46, -0.3, k);
+    // the HQ's bike by its front door: ride it like one from the bike park
+    var Bm = c.bike(col.accent); Bm.g.position.set(Bk.x, 0, Bk.z); Bm.g.rotation.y = Bk.yaw; g.add(Bm.g);
+    var cr = Math.cos(L.rot), sr = Math.sin(L.rot);                               // the lot's frame -> the street's
+    bikes.push({g: Bm.g, x: L.x + Bk.x*cr + Bk.z*sr, z: L.z - Bk.x*sr + Bk.z*cr, yaw: Bk.yaw + L.rot, color: col.accent});
   }
   // one tab's building (games/hqbase.js): its door opens that tab
   function viewBuilding(L){
@@ -285,6 +347,7 @@ HQV.hqWorlds.city = function(c, w){
       var L = all[i], rx = x - L.x, rz = z - L.z, c0 = Math.cos(-L.rot), s0 = Math.sin(-L.rot);
       var lx = rx*c0 + rz*s0, lz = -rx*s0 + rz*c0;              // into the lot's own frame
       if(L.B && L.B.blockedLocal(lx, lz)) return true;
+      if(L.h && lotExtraBlocked(lx, lz)) return true;                // its garage and car
     }
     return false;
   }
