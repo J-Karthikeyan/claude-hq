@@ -44,3 +44,6 @@ backend/.releases
 # HQ 2.5 loot reporter state (salted PR hashes, sent counts)
 loot-state.json
 loot-state.json.tmp
+
+# HQ Notch build output
+notch/.build/

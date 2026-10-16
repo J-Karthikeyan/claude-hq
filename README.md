@@ -186,6 +186,14 @@ Once installed you never start it by hand again — just open <http://127.0.0.1:
 echo 'alias claude-hq="python3 ~/Documents/Claude/claude-dashboard/dashboard.py"' >> ~/.zshrc
 ```
 
+### Optional: HQ Notch (macOS)
+Your party in the Mac's notch: each live session as its HQ Pokémon, a live tool ticker, and
+**Allow / Always / Deny** for permission prompts plus answers to `AskUserQuestion`, right from the notch.
+```bash
+python3 notch/tools/install.py      # builds with the Command Line Tools, adds Claude Code hooks (backed up)
+```
+See [`notch/README.md`](notch/README.md). `--uninstall` removes it all again.
+
 ---
 
 ## 🔒 Privacy & security
@@ -204,6 +212,10 @@ echo 'alias claude-hq="python3 ~/Documents/Claude/claude-dashboard/dashboard.py"
   `<name>.corrupt-<timestamp>` (git-ignored) and defaults are used, so nothing is silently overwritten.
   A symlinked state file is written through (the link is kept, the target replaced).
 - Your transcripts and settings stay on disk. `config.json` and `sessions-meta.json` are git-ignored.
+- **HQ Notch (optional)** talks to Claude Code only through a local Unix socket (`0700` dir, `0600`
+  socket, peer uid checked). Its only network requests are HQ's existing sprite hotlinks (a National
+  Dex number in the URL) and HQ itself on `127.0.0.1`. If the notch is closed or never answers, every
+  hook prints nothing and Claude Code asks in the terminal as usual.
 - **Arena is off by default.** When enabled it publishes daily *counts* only — never conversation
   content, file paths or project names — and its device token lives in `arena-link.json`, outside
   `config.json`, so it is never served to the page. See [Arena](#-arena-multiplayer--optional).
@@ -217,6 +229,7 @@ echo 'alias claude-hq="python3 ~/Documents/Claude/claude-dashboard/dashboard.py"
 | `dashboard.py` | Stdlib-only HTTP server: reads live agents + transcripts, serves the JSON API and the page. |
 | `index.html` + `ui/` | The frontend: the page template and its CSS and script, split by area in `ui/` and stitched into one page by the server (no build step). |
 | `arena.py` | Optional Arena client: builds + publishes the shared-stats payload. |
+| `notch/` | Optional macOS notch companion (SwiftUI app + stdlib hook relay + installer). |
 | `backend/` | Optional Arena server (FastAPI). Only needed by whoever hosts it. |
 | `arena-link.json` | Your Arena device token. *(git-ignored)* |
 | `config.json` | Your settings (theme, pack, budget, …). Created on first save. *(git-ignored)* |
@@ -316,6 +329,15 @@ and feature guide.
 ---
 
 ## Changelog
+
+- **Unreleased** — **HQ Notch** (`notch/`, macOS, optional). A notch companion app: every live Claude
+  Code session as its HQ Pokémon (same species, evolution and shiny as the dashboard), animated by state
+  (working, needs you, done, error, idle), with HQ's session titles, the current tool and a live ticker
+  with `+N −M` for edits. Permission prompts open the notch with **Allow / Always / Deny / Terminal**,
+  and `AskUserQuestion` choices (single or multi-select) can be answered there. Click a card to focus
+  its kitty / Terminal / iTerm2 / tmux window. Installed with `python3 notch/tools/install.py`, which
+  adds Claude Code hooks (only its own entries, with a settings backup) and a login item.
+  *Privacy:* local Unix socket only; no new egress beyond HQ's existing sprite hotlinks.
 
 - **2.5.0** — **Make + compete.** Build your own maps, share them, and compete on them every week.
   - **Track Editor**: paint a kart loop on a grid, see a live check, test-drive it, save it and race it
