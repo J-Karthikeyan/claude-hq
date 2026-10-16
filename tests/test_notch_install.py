@@ -30,6 +30,11 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(h["timeout"], 120)
         self.assertIn(inst.MARKER, h["command"])
         self.assertEqual(s["hooks"]["Stop"][0]["hooks"][0]["timeout"], 10)
+        ask = [g for g in s["hooks"]["PreToolUse"] if g.get("matcher") == "AskUserQuestion"]
+        self.assertEqual(len(ask), 1)
+        self.assertTrue(ask[0]["hooks"][0]["command"].endswith(" --ask"))
+        self.assertEqual(ask[0]["hooks"][0]["timeout"], inst.ASK_TIMEOUT)
+        self.assertEqual(len(s["hooks"]["PreToolUse"]), 2)   # generic + --ask
 
     def test_install_is_idempotent_and_keeps_others(self):
         base = {"model": "opus", "hooks": {"Stop": [{"hooks": [OTHER]}],
