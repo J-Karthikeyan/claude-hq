@@ -265,6 +265,9 @@ replies, file paths, project or folder names, session ids, or titles.
   and routinely carry an employer's or client's name, so anything that isn't a
   built-in Claude Code tool is bucketed as `Other` before it reaches the wire.
 - **Cost sharing is off by default.** Spend is salary- and employer-adjacent.
+- **The skate board is two numbers.** When a combo in Arena City's skatepark beats your
+  best for the week, the page sends its total and how many tricks it chained (checked
+  by `ext_skate.py`, then by the Arena). Nothing about where, when or from which session.
 - **Chat is only what you type.** Messages in the lobby chat go to everyone in
   the lobby, relayed by the server. It keeps the last 50 in memory (never on
   disk) so people who join can catch up; they're gone when the lobby empties or
@@ -349,7 +352,9 @@ and feature guide.
   plaza has a skatepark: two quarter pipes, a fun box, a ledge and a rail, a row of boards to step on,
   ollies, airs, 180/360/540 spins, kickflips, shove-its, grinds, bails and combos with your best kept on
   this machine. Others in the Arena see you skate and your tricks (presence `a = 4` with a trick `k` and a
-  height `y`, behind the new `"skate"` capability; the Rust Arena stores and relays them).
+  height `y`, behind the new `"skate"` capability; the Rust Arena stores and relays them). Others also see
+  your car or motorbike (`a = 5` / `6`, the `"drive"` capability), skaters bend, tuck and throw their arms out
+  on tricks, and a weekly **Skate board** lists the best combos (only the combo's total and trick count are sent).
 
 - **Unreleased** — **HQ Notch** (`notch/`, macOS, optional). A notch companion app: every live Claude
   Code session as its HQ Pokémon (same species, evolution and shiny as the dashboard), animated by state

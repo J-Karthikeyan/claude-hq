@@ -36,6 +36,7 @@ mod schemas;
 mod scoring;
 mod server_stats;
 mod service;
+mod skate;
 mod skills;
 mod sounds;
 #[cfg(test)]
@@ -890,6 +891,7 @@ async fn serve() -> anyhow::Result<()> {
         .merge(progress::routes())
         .merge(quickplay::routes())
         .merge(server_stats::routes())
+        .merge(skate::routes())
         .merge(skills::routes())
         .merge(sounds::routes())
         .layer(middleware::from_fn_with_state(state.clone(), require_device));

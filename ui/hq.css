@@ -1957,6 +1957,11 @@ html.hq-calm #confetti{display:none!important}
 .hq3d-here{display:grid;gap:2px;font-size:12px;background:var(--panel2);border:1px solid var(--line);border-radius:var(--radius-sm);padding:6px 8px}
 .hq3d-here[hidden]{display:none}
 .hq3d-here b{font-size:12px}
+/* the City's weekly skate board (side panel) */
+.hq3d-skateboard{margin:6px 0 4px;padding-left:22px;display:grid;gap:2px;font-size:12px}
+.hq3d-skateboard li{display:flex;justify-content:space-between;gap:8px;color:var(--ink)}
+.hq3d-skateboard li b{font-family:var(--mono);color:var(--brand)}
+.hq3d-skateme{margin:0;font-size:12px}
 
 /* ---- HQ 2.1: trainer card + game boards (ui/app/23-progress.js) ---- */
 .tcard-back{position:fixed;inset:0;background:var(--scrim);display:none;align-items:center;justify-content:center;z-index:80;padding:16px}

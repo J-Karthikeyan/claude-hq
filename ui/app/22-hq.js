@@ -49,7 +49,9 @@ function hqApi(){
     // HQ 2.5 prestige stars: extra floors on YOUR building only (visits pass no prestige)
     prestige: function(){ return typeof prestigeStars==="function" ? prestigeStars() : 0; },
     onWorld: function(name){ HQ3D.world = name; hqRenderWhere(); },
-    announce: function(t){ if(typeof announce==="function") announce(t); }
+    announce: function(t){ if(typeof announce==="function") announce(t); },
+    // a skate combo banked in the city park (games/hq3d.js): maybe a new best for the week board
+    skateCombo: function(c){ hqSkateCombo(c); }
   };
 }
 // How your building looks (HQ customisation; saved on the Arena in a later step): paint, accent, sign.
@@ -65,6 +67,7 @@ function hqJumpCity(){
   if(HQ3D.inst) go(); else hqLoadScripts().then(function(){ setTimeout(go, 300); }).catch(function(){});
 }
 function hqRenderWhere(){
+  hqSkateShow();
   var box=$("hqWhere"); if(!box) return;
   box.textContent="";
   var city=!HQ3D.visit && hqCityOn();
@@ -447,6 +450,8 @@ function hqNetSend(){
   var a=HQ3D.inst.moving ? HQ3D.inst.moving() : 0;
   if(a===3 && !hqNetCan("ride")) a=2;   // an Arena without bikes drops a 3 (and you would freeze): send "running"
   if(a===4 && !hqNetCan("skate")) a=2;  // nor does one without skateboards know a 4
+  // a car (5) or a motorbike (6) needs "drive"; without it, show a bike where bikes are known
+  if((a===5 || a===6) && !hqNetCan("drive")) a = hqNetCan("ride") ? 3 : 2;
   var msg={type:"game", g:"hq", op:"pos", w:w.world, x:Math.round(w.x*100), z:Math.round(w.z*100),
            r:Math.round(((w.yaw*180/Math.PI)%360+360)%360), a:a};
   // on a board: the trick you are doing (k) and how high you are (y, decimetres), so others see it
@@ -460,7 +465,8 @@ function hqNetSend(){
 setInterval(function(){ if(VIEW==="hq") hqSync(); hqNetSync(); hqNetSend(); }, 125);
 // "Here now": who else is in this HQ, and on which floor.
 var HQ_FLOOR_NAME = {base:"outside", city:"in Arena City", lobby:"in the Lobby", mission:"in Mission Control"};
-// (riding a bike shows as "on a bike" beside the floor, a skateboard as "skating")
+// (riding a bike shows as "on a bike" beside the floor, a skateboard as "skating", and so on)
+var HQ_MOVING_NAME = {3:" · on a bike", 4:" · skating", 5:" · driving", 6:" · on a motorbike"};
 function hqRenderHere(){
   var box=$("hqHere"); if(!box) return;
   var ps=HQNET.peers||[];
@@ -468,9 +474,72 @@ function hqRenderHere(){
   if(!ps.length) return;
   var h=document.createElement("b"); h.textContent="Here now"; box.appendChild(h);
   ps.slice(0,12).forEach(function(p){
-    var d=document.createElement("button"); d.type="button"; d.className="hq3d-person"; d.textContent=(p.n||"Visitor")+" · "+(HQ_FLOOR_NAME[p.w]||"")+(p.a===3 ? " · on a bike" : p.a===4 ? " · skating" : "");
+    var d=document.createElement("button"); d.type="button"; d.className="hq3d-person"; d.textContent=(p.n||"Visitor")+" · "+(HQ_FLOOR_NAME[p.w]||"")+(HQ_MOVING_NAME[p.a]||"");
     d.title="Open their trainer card"; d.addEventListener("click", function(){ if(typeof tcardOpen==="function") tcardOpen(p.u); });
     if(typeof cosFrameApply==="function") cosFrameApply(d, p.f);
     box.appendChild(d);
   });
+}
+
+/* ---- Arena City skate board: each player's best combo this UTC week (backend-rs/src/skate.rs) ----
+   Only a combo's total and its trick count leave this machine (ext_skate.py checks both), and
+   only when paired, only for a new best this week. The board is read through the local proxy. */
+var HQ_SKATE = {board:null, at:0, loading:false, post:null, timer:0, sentAt:0, err:null};
+function hqSkatePaired(){ return !!(window.ARENA && ARENA.paired); }
+function hqSkateShow(){
+  var sec=$("hqSkateSec"); if(!sec) return;
+  var on = HQ3D.world==="city" && hqSkatePaired();
+  sec.hidden=!on;
+  if(on && !HQ_SKATE.loading && Date.now()-HQ_SKATE.at > 60000) hqSkateLoad();
+}
+function hqSkateLoad(){
+  HQ_SKATE.loading=true;
+  fetch("/api/arena/skate",{cache:"no-store"}).then(function(r){ return r.json().then(function(j){ return {ok:r.ok, code:r.status, j:j||{}}; }); })
+    .then(function(res){
+      if(res.ok && res.j && Array.isArray(res.j.top)){ HQ_SKATE.board=res.j; HQ_SKATE.err=null; }
+      else HQ_SKATE.err = res.code===404 ? "This Arena has no skate board yet." : (res.j.error||"The Arena didn't answer.");
+    }).catch(function(){ HQ_SKATE.err="The Arena didn't answer."; })
+    .then(function(){ HQ_SKATE.loading=false; HQ_SKATE.at=Date.now(); hqSkateRender(); });
+}
+function hqSkateRender(){
+  var ol=$("hqSkateBoard"), me=$("hqSkateMe"); if(!ol || !me) return;
+  ol.textContent="";
+  var b=HQ_SKATE.board;
+  if(!b){ me.textContent=HQ_SKATE.err||"Loading…"; return; }
+  (b.top||[]).slice(0,10).forEach(function(e){
+    var li=document.createElement("li"), n=document.createElement("span"), v=document.createElement("b");
+    n.textContent=e.displayName||e.handle||"Someone"; v.textContent=String(e.best|0);
+    li.title=(e.tricks|0)+" tricks"; li.appendChild(n); li.appendChild(v); ol.appendChild(li);
+  });
+  if(!(b.top||[]).length){ var li=document.createElement("li"); li.className="muted"; li.textContent="No combos yet this week. Be the first."; ol.appendChild(li); }
+  me.textContent = b.me ? "You: #"+(b.me.rank|0)+" · best "+(b.me.best|0) : "Land a combo in the skatepark to get on the board.";
+}
+// Called when a combo banks. Only a new best for this week goes out, at most once every 4 s
+// (the Arena refuses faster ones); the latest best waits for the next slot.
+function hqSkateCombo(c){
+  if(!c || !hqSkatePaired()) return;
+  var total=Math.round(+c.total||0), tricks=Math.max(1, Math.min(10, c.tricks|0));
+  if(total<1 || total>200000) return;
+  var mine=HQ_SKATE.board && HQ_SKATE.board.me ? (HQ_SKATE.board.me.best|0) : 0;
+  if(total<=mine || (HQ_SKATE.post && total<=HQ_SKATE.post.total)) return;
+  HQ_SKATE.post={total:total, tricks:tricks};
+  if(HQ_SKATE.timer) return;
+  var wait=Math.max(0, 4000-(Date.now()-HQ_SKATE.sentAt));
+  HQ_SKATE.timer=setTimeout(hqSkateSend, wait);
+}
+function hqSkateSend(){
+  HQ_SKATE.timer=0;
+  var p=HQ_SKATE.post; if(!p) return;
+  HQ_SKATE.post=null; HQ_SKATE.sentAt=Date.now();
+  fetch("/api/arena/skate/combo",{method:"POST", headers:{"Content-Type":"application/json","X-HQ-Token":CSRF}, body:JSON.stringify(p)})
+    .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j||{}}; }); })
+    .then(function(res){
+      if(res.ok && typeof res.j.best==="number"){
+        if(!HQ_SKATE.board) HQ_SKATE.board={week:res.j.week, top:[], me:null};
+        HQ_SKATE.board.me={best:res.j.best, rank:res.j.rank};
+        if(typeof announce==="function") announce("Skate board: #"+(res.j.rank|0)+" this week with "+(res.j.best|0)+".");
+        HQ_SKATE.at=0; hqSkateShow();
+      }
+    }).catch(function(){})
+    .then(function(){ if(HQ_SKATE.post && !HQ_SKATE.timer) HQ_SKATE.timer=setTimeout(hqSkateSend, 4000); });
 }

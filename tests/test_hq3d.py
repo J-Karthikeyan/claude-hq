@@ -317,7 +317,7 @@ class Skatepark(unittest.TestCase):
         self.assertIn('list.push({g: Bd.g, x: cx + lx, z: cz + lz, yaw: -PI/2, color: col, kind: "skate"});', city)
         self.assertIn('if(skate && HQV.hqSkatePark.walkBlocked(x - skate.cx, z - skate.cz)) return true;', city)
         self.assertIn('if(ride){ if(ride.kind === "skate") skateMove(dt); else rideMove(dt); return; }', src)
-        self.assertIn('return ride ? (ride.kind === "skate" ? 4 : 3) : keyMove', src)
+        self.assertIn('return ride ? (RIDE_A[ride.kind] || 3) : keyMove', src)
         # a 4, with its trick and height, only to an Arena that lists "skate"
         self.assertIn('if(a===4 && !hqNetCan("skate")) a=2;', page)
         self.assertIn('if(sk){ msg.k=sk.k|0; msg.y=sk.y|0; }', page)
@@ -325,6 +325,75 @@ class Skatepark(unittest.TestCase):
         css = open(os.path.join(ROOT, "ui", "hq.css"), encoding="utf-8").read()
         self.assertIn("html.hq-calm .hq3d-skate-pop{animation:none}", css)
         self.assertIn("@media (prefers-reduced-motion: reduce){.hq3d-skate-pop{animation:none}}", css)
+
+    def test_vehicles_poses_and_board_wiring(self):
+        src = open(os.path.join(ROOT, "games", "hq3d.js"), encoding="utf-8").read()
+        page = open(os.path.join(ROOT, "ui", "app", "22-hq.js"), encoding="utf-8").read()
+        html = open(os.path.join(ROOT, "index.html"), encoding="utf-8").read()
+        # others see your car (5) or motorbike (6), only where the Arena lists "drive"
+        self.assertIn('var RIDE_A = {bike: 3, skate: 4, car: 5, moto: 6};', src)
+        self.assertIn('var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto"};', src)
+        self.assertIn('var PEER_SEAT = {bike: seatRider, car: seatDriver, moto: seatMoto};', src)
+        self.assertIn('if((a===5 || a===6) && !hqNetCan("drive")) a = hqNetCan("ride") ? 3 : 2;', page)
+        self.assertIn('var HQ_MOVING_NAME = {3:" · on a bike", 4:" · skating", 5:" · driving", 6:" · on a motorbike"};', page)
+        # trick poses from the rig's bones, none in Calm, undone before the mixer runs
+        for bone in ('"arm-left"', '"arm-right"', '"torso"', '"leg-left"', '"leg-right"'):
+            self.assertIn(bone, src)
+        self.assertIn('sk.pose = E.calm() ? null : skatePoseOf(Sim.kOf(st), st.air, sk.crouch);', src)
+        self.assertIn('if(skp || avatar.ch._po) poseUndo(avatar.ch);', src)
+        self.assertIn('if(!calm) poseApply(P.ch, skatePoseOf(P.k,', src)
+        # a banked combo goes to the page, which may post it (games scripts never fetch)
+        self.assertIn('if(api.skateCombo) api.skateCombo({total: e.total, tricks: e.mult});', src)
+        self.assertIn('skateCombo: function(c){ hqSkateCombo(c); }', page)
+        self.assertIn('fetch("/api/arena/skate/combo",{method:"POST", headers:{"Content-Type":"application/json","X-HQ-Token":CSRF}, body:JSON.stringify(p)})', page)
+        self.assertIn('if(total<=mine || (HQ_SKATE.post && total<=HQ_SKATE.post.total)) return;', page)   # only a new best
+        self.assertIn('var on = HQ3D.world==="city" && hqSkatePaired();', page)
+        self.assertIn('n.textContent=e.displayName||e.handle||"Someone";', page)    # names as text, never HTML
+        self.assertIn('id="hqSkateSec" hidden', html)
+
+
+class SkateProxy(unittest.TestCase):
+    """ext_skate.py: the only things that leave are a combo's total and trick count, both checked."""
+
+    def setUp(self):
+        import arena
+        import ext_skate
+        self.arena, self.ext = arena, ext_skate
+        self._req, self._link = arena._request, arena.load_link
+        arena.load_link = lambda: {"token": "T", "url": "https://arena.example"}
+        self.sent = []
+        arena._request = lambda m, u, token=None, body=None: (self.sent.append((m, u, body)) or (200, {"ok": True}))
+
+    def tearDown(self):
+        self.arena._request, self.arena.load_link = self._req, self._link
+
+    def test_post_sends_two_numbers_only(self):
+        code, _ = self.ext.post_combo({"total": 800, "tricks": 2, "where": "rail", "session": "abc"})
+        self.assertEqual(code, 200)
+        self.assertEqual(self.sent, [("POST", "https://arena.example/v1/skate", {"total": 800, "tricks": 2})])
+
+    def test_bad_combos_never_leave(self):
+        for bad in ({"total": 0, "tricks": 1}, {"total": 200001, "tricks": 1}, {"total": 5, "tricks": 11},
+                    {"total": 1.5, "tricks": 1}, {"total": True, "tricks": 1}, {"total": "9", "tricks": 1},
+                    {"tricks": 1}, [], None, {"total": float("nan"), "tricks": 1}):
+            code, _ = self.ext.post_combo(bad)
+            self.assertEqual(code, 400, bad)
+        self.assertEqual(self.sent, [])
+
+    def test_board_is_a_plain_get(self):
+        code, _ = self.ext.get_board(lambda k: "")
+        self.assertEqual(code, 200)
+        self.assertEqual(self.sent, [("GET", "https://arena.example/v1/skate", None)])
+
+    def test_unpaired_sends_nothing(self):
+        self.arena.load_link = lambda: {"url": "https://arena.example"}     # a link with no device token
+        self.assertEqual(self.ext.post_combo({"total": 10, "tricks": 1})[0], 400)
+        self.assertEqual(self.ext.get_board(lambda k: "")[0], 400)
+        self.assertEqual(self.sent, [])
+
+    def test_registered(self):
+        import dashboard
+        self.assertIn(self.ext, dashboard.EXT)
 
 
 @unittest.skipUnless(shutil.which("node"), "node not installed")
@@ -389,7 +458,7 @@ class ArenaCity(unittest.TestCase):
         self.assertIn('visit: function(uid){ hqVisit(uid, {from:"city"}); }', html)
         src = open(os.path.join(ROOT, "games", "hq3d.js"), encoding="utf-8").read()
         self.assertIn('d.view.indexOf("visit:") === 0', src)
-        self.assertIn('return ride ? (ride.kind === "skate" ? 4 : 3) : keyMove', src)   # a rider reports a = 3, a skater 4
+        self.assertIn('return ride ? (RIDE_A[ride.kind] || 3) : keyMove', src)   # a rider reports a = 3, a skater 4
         city = open(os.path.join(ROOT, "games", "hqcity.js"), encoding="utf-8").read()
         self.assertIn('bikes = bikePark(P.x + 8.6, P.z);', city)         # the bike park beside the fountain
         self.assertIn('city.views.forEach(viewBuilding);', city)         # every tab has a building on the street
