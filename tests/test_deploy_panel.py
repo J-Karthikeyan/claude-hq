@@ -186,6 +186,76 @@ class DeployProgress(unittest.TestCase):
         self.assertEqual((r["phase"], r["idx"], r["state"]), ("FETCH", 1, "running"))
 
 
+GATE = RUN.split(say("Building"))[0]   # stopped at the CI gate
+
+
+class CiHold(unittest.TestCase):
+    """release.sh holds at the CI gate while GitHub is still running checks.
+
+    The panel turns that into its own state rather than a stalled bar, and it
+    must never call a release held at the gate "aborted" or "rolled back":
+    nothing on the box was touched.
+    """
+
+    def p(self, *lines):
+        return deploy_panel.parse_progress(GATE + "\n".join(lines) + "\n")
+
+    def test_a_hold_reads_its_checks_budget_and_time(self):
+        r = self.p("    holding for CI, up to 300s",
+                   "    waiting on: backend, rust (passed: unittest)",
+                   "    waiting on: rust (passed: unittest, backend)")
+        self.assertEqual((r["phase"], r["state"]), ("CI GATE", "running"))
+        ci = r["ci"]
+        self.assertEqual((ci["state"], ci["sha"], ci["budget"], ci["waited"]),
+                         ("waiting", "843e4c6", 300, 20))
+        self.assertEqual(ci["checks"], [{"name": "unittest", "status": "success"},
+                                        {"name": "backend", "status": "success"},
+                                        {"name": "rust", "status": "pending"}])
+
+    def test_checks_not_queued_yet_still_hold(self):
+        r = self.p("    holding for CI, up to 300s", "    no CI runs for this commit yet, waiting")
+        self.assertEqual((r["ci"]["state"], r["ci"]["checks"]), ("waiting", []))
+
+    def test_cleared_gate_moves_on_and_keeps_the_results(self):
+        r = deploy_panel.parse_progress(GATE + "    waiting on: rust (passed: unittest)\n"
+                                        "    unittest   success\n    rust       success\n"
+                                        "    \x1b[32m✓\x1b[0m CI passed\n" + say("Building rs x") + "\n")
+        self.assertEqual((r["phase"], r["ci"]["state"]), ("BUILD", "passed"))
+        self.assertEqual({c["status"] for c in r["ci"]["checks"]}, {"success"})
+
+    def test_why_it_stopped_is_named(self):
+        for line, reason in (("CI failed for this commit (x)", "ci_failed"),
+                             ("CI still running after 300s (x)", "ci_timeout"),
+                             ("could not reach GitHub to check CI (x)", "ci_unreachable")):
+            r = self.p("    unittest   failure", "    \x1b[31m✗\x1b[0m " + line)
+            self.assertEqual((r["state"], r["reason"]), ("fail", reason), line)
+            self.assertIn("Nothing was deployed", deploy_panel.FAILURES[reason])
+
+    def test_a_failing_check_keeps_its_conclusion(self):
+        r = self.p("    unittest   success", "    backend    failure", "    rust       in_progress",
+                   "    \x1b[31m✗\x1b[0m CI failed for this commit (x)")
+        self.assertEqual([c["status"] for c in r["ci"]["checks"]], ["success", "failure", "pending"])
+
+    def test_only_a_rollback_is_aborted(self):
+        r = deploy_panel.parse_progress(RUN + "    \x1b[31m✗\x1b[0m build failed\n"
+                                        + say("Rolling back to 2026.10.08-4133b25 (rs)") + "\n")
+        self.assertEqual(r["reason"], "rolled_back")
+        page = deploy_panel.PAGE
+        self.assertEqual(page.count(':"aborted'), 1)   # one verdict says it
+        self.assertIn('rolled_back:"aborted', page)
+
+    def test_a_running_release_has_no_reason(self):
+        self.assertIsNone(deploy_panel.parse_progress(RUN)["reason"])
+
+    def test_the_hold_has_its_own_look_and_respects_reduced_motion(self):
+        page = deploy_panel.PAGE
+        for name in ("spin", "ping", "comet", "rgbsplit", "lockon", "clearedin"):
+            self.assertIn("@keyframes " + name, page)
+        block = _media_blocks(page, "@media (prefers-reduced-motion:reduce)")
+        for sel in (".beam", ".lane .lt::before", ".ticker span", ".holdtitle"):
+            self.assertIn(sel, block)
+
+
 def _media_blocks(css, header):
     """Every @media rule with this header, joined.
 
