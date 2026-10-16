@@ -48,7 +48,7 @@ struct NotchRoot: View {
             HStack(spacing: -6) {
                 ForEach(live.prefix(3)) { s in
                     CreatureSprite(sessionId: s.id, creature: model.creature(s), status: s.status,
-                                   size: max(18, notch.height - 6))
+                                   size: max(18, notch.height - 6), pack: model.pack)
                 }
             }
             .frame(width: Self.wing, alignment: .leading)
@@ -79,26 +79,30 @@ struct NotchRoot: View {
     private var expanded: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
-            // Oldest two requests as cards; the rest wait their turn.
-            ForEach(model.store.pending.prefix(2)) { r in
-                RequestCard(model: model, request: r)
-            }
-            if model.store.pending.count > 2 {
-                Text("+\(model.store.pending.count - 2) more waiting").font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Theme.alert)
-            }
-            let list = model.visibleSessions
-            if list.isEmpty {
-                Text(model.hqReachable ? "No live Claude sessions." : "No live Claude sessions. Start one and it shows up here.")
-                    .font(.system(size: 12)).foregroundStyle(Theme.subtle)
-                    .frame(maxWidth: .infinity, alignment: .center).padding(.vertical, 18)
+            if model.showSettings {
+                SettingsView(model: model)
             } else {
-                // Up to four cards at natural height; more scroll inside 380 pt.
-                if list.count <= 4 && model.store.pending.isEmpty {
-                    cards(list)
+                // Oldest two requests as cards; the rest wait their turn.
+                ForEach(model.store.pending.prefix(2)) { r in
+                    RequestCard(model: model, request: r)
+                }
+                if model.store.pending.count > 2 {
+                    Text("+\(model.store.pending.count - 2) more waiting").font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.alert)
+                }
+                let list = model.visibleSessions
+                if list.isEmpty {
+                    Text(model.hqReachable ? "No live Claude sessions." : "No live Claude sessions. Start one and it shows up here.")
+                        .font(.system(size: 12)).foregroundStyle(Theme.subtle)
+                        .frame(maxWidth: .infinity, alignment: .center).padding(.vertical, 18)
                 } else {
-                    ScrollView(.vertical, showsIndicators: false) { cards(list) }
-                        .frame(height: model.store.pending.isEmpty ? 380 : 220)
+                    // Up to four cards at natural height; more scroll inside 380 pt.
+                    if list.count <= 4 && model.store.pending.isEmpty {
+                        cards(list)
+                    } else {
+                        ScrollView(.vertical, showsIndicators: false) { cards(list) }
+                            .frame(height: model.store.pending.isEmpty ? 380 : 220)
+                    }
                 }
             }
         }
@@ -125,11 +129,9 @@ struct NotchRoot: View {
             Circle().fill(model.hqReachable ? Theme.ok : Theme.faint).frame(width: 6, height: 6)
                 .help(model.hqReachable ? "Connected to Claude HQ" : "Claude HQ is not running: using local creatures")
             Spacer()
-            IconButton(symbol: model.muted ? "speaker.slash.fill" : "speaker.wave.2.fill",
-                       help: model.muted ? "Unmute" : "Mute") { model.muted.toggle() }
-            IconButton(symbol: model.showIdle ? "eye.fill" : "eye.slash.fill",
-                       help: model.showIdle ? "Hide idle sessions" : "Show idle sessions") { model.showIdle.toggle() }
             IconButton(symbol: "square.grid.2x2.fill", help: "Open Claude HQ") { model.openHQ() }
+            IconButton(symbol: model.showSettings ? "xmark" : "gearshape.fill",
+                       help: model.showSettings ? "Close settings" : "Settings") { model.showSettings.toggle() }
         }
     }
 }
@@ -158,13 +160,13 @@ struct SessionCard: View {
     var body: some View {
         let cr = model.creature(session)
         HStack(alignment: .top, spacing: 10) {
-            CreatureSprite(sessionId: session.id, creature: cr, status: session.status, size: 46)
+            CreatureSprite(sessionId: session.id, creature: cr, status: session.status, size: 46, pack: model.pack)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(session.label).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.text)
                         .lineLimit(1)
-                    Text(session.title.isEmpty ? cr.name(sessionId: session.id)
-                                               : "\(session.folder) · \(cr.name(sessionId: session.id))")
+                    Text(session.title.isEmpty ? cr.name(sessionId: session.id, pack: model.pack)
+                                               : "\(session.folder) · \(cr.name(sessionId: session.id, pack: model.pack))")
                         .font(.system(size: 10.5)).foregroundStyle(Theme.faint).lineLimit(1).layoutPriority(-1)
                     if session.subagents > 0 {
                         Text("+\(session.subagents) agents").font(.system(size: 10, weight: .medium))
@@ -240,7 +242,7 @@ struct RequestCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 if let s {
-                    CreatureSprite(sessionId: s.id, creature: model.creature(s), status: .needs, size: 34)
+                    CreatureSprite(sessionId: s.id, creature: model.creature(s), status: .needs, size: 34, pack: model.pack)
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(s?.label ?? "Claude").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text)
@@ -390,5 +392,79 @@ struct LinkStyle: ButtonStyle {
         configuration.label.font(.system(size: 11, weight: .medium))
             .foregroundStyle(configuration.isPressed ? Theme.text : Theme.subtle)
             .underline()
+    }
+}
+
+// MARK: settings
+
+/// The notch's own settings (the gear in the header). Every choice is saved at once.
+struct SettingsView: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Sprites").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.subtle)
+                Picker("Sprites", selection: $model.spriteSetting) {
+                    ForEach(SpriteSetting.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden()
+                Text(spriteNote).font(.system(size: 10.5)).foregroundStyle(Theme.faint)
+                    .fixedSize(horizontal: false, vertical: true)
+                previewRow
+            }
+            Divider().overlay(Theme.card)
+            SettingToggle(title: "Sounds", detail: "A chime when a session needs you or finishes.", isOn: $model.soundsOn)
+            SettingToggle(title: "Show idle sessions", detail: "Sessions waiting for your next prompt.", isOn: $model.showIdle)
+            SettingToggle(title: "Approve from the notch",
+                          detail: "Off: every permission prompt and question goes straight to the terminal.",
+                          isOn: $model.approvals)
+            Divider().overlay(Theme.card)
+            HStack {
+                Circle().fill(model.hqReachable ? Theme.ok : Theme.faint).frame(width: 6, height: 6)
+                Text(model.hqReachable ? "Connected to Claude HQ" : "Claude HQ isn't running: creatures are computed here")
+                    .font(.system(size: 10.5)).foregroundStyle(Theme.subtle)
+                Spacer()
+                Button("Quit") { NSApp.terminate(nil) }.buttonStyle(LinkStyle())
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    private var spriteNote: String {
+        switch model.spriteSetting {
+        case .twoD: return "Animated 2D sprites. Apex is the line's final form."
+        case .threeD: return "Animated 3D sprites, as in HQ's 3D pack. Apex Pokémon with a Mega show their Mega form."
+        case .matchHQ: return "Whatever HQ uses: now \(model.hqPack == .threeD ? "3D" : "2D")."
+        }
+    }
+
+    /// The live sessions in the chosen style, so the switch shows what it does.
+    private var previewRow: some View {
+        HStack(spacing: 6) {
+            ForEach(model.visibleSessions.prefix(6)) { s in
+                CreatureSprite(sessionId: s.id, creature: model.creature(s), status: .working, size: 34, pack: model.pack)
+            }
+        }
+    }
+}
+
+struct SettingToggle: View {
+    let title: String
+    let detail: String
+    @Binding var isOn: Bool
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.text)
+                Text(detail).font(.system(size: 10.5)).foregroundStyle(Theme.faint)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Toggle(title, isOn: $isOn).labelsHidden()
+                .toggleStyle(.switch).tint(Theme.ok).controlSize(.small)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { isOn.toggle() }
     }
 }

@@ -98,4 +98,47 @@ public enum PokeData {
         612: "Haxorus", 633: "Deino", 634: "Zweilous", 635: "Hydreigon", 636: "Larvesta", 637: "Volcarona",
         700: "Sylveon",
     ]
+    /// Mega forms by FINAL-form dex (3D pack, Apex only). oras: lives in the ORAS gallery.
+    public static let mega: [Int: [MegaForm]] = [
+        3: [MegaForm(name: "Mega Venusaur", slug: "venusaur-mega", oras: false)],
+        6: [MegaForm(name: "Mega Charizard X", slug: "charizard-megax", oras: false), MegaForm(name: "Mega Charizard Y", slug: "charizard-megay", oras: false)],
+        9: [MegaForm(name: "Mega Blastoise", slug: "blastoise-mega", oras: false)],
+        15: [MegaForm(name: "Mega Beedrill", slug: "beedrill-mega", oras: true)],
+        18: [MegaForm(name: "Mega Pidgeot", slug: "pidgeot-mega", oras: true)],
+        65: [MegaForm(name: "Mega Alakazam", slug: "alakazam-mega", oras: false)],
+        80: [MegaForm(name: "Mega Slowbro", slug: "slowbro-mega", oras: true)],
+        94: [MegaForm(name: "Mega Gengar", slug: "gengar-mega", oras: false)],
+        115: [MegaForm(name: "Mega Kangaskhan", slug: "kangaskhan-mega", oras: false)],
+        130: [MegaForm(name: "Mega Gyarados", slug: "gyarados-mega", oras: false)],
+        142: [MegaForm(name: "Mega Aerodactyl", slug: "aerodactyl-mega", oras: false)],
+        150: [MegaForm(name: "Mega Mewtwo X", slug: "mewtwo-megax", oras: false), MegaForm(name: "Mega Mewtwo Y", slug: "mewtwo-megay", oras: false)],
+        181: [MegaForm(name: "Mega Ampharos", slug: "ampharos-mega", oras: false)],
+        208: [MegaForm(name: "Mega Steelix", slug: "steelix-mega", oras: true)],
+        212: [MegaForm(name: "Mega Scizor", slug: "scizor-mega", oras: false)],
+        214: [MegaForm(name: "Mega Heracross", slug: "heracross-mega", oras: false)],
+        229: [MegaForm(name: "Mega Houndoom", slug: "houndoom-mega", oras: false)],
+        248: [MegaForm(name: "Mega Tyranitar", slug: "tyranitar-mega", oras: false)],
+        254: [MegaForm(name: "Mega Sceptile", slug: "sceptile-mega", oras: true)],
+        257: [MegaForm(name: "Mega Blaziken", slug: "blaziken-mega", oras: false)],
+        260: [MegaForm(name: "Mega Swampert", slug: "swampert-mega", oras: true)],
+        282: [MegaForm(name: "Mega Gardevoir", slug: "gardevoir-mega", oras: false)],
+        306: [MegaForm(name: "Mega Aggron", slug: "aggron-mega", oras: false)],
+        310: [MegaForm(name: "Mega Manectric", slug: "manectric-mega", oras: false)],
+        319: [MegaForm(name: "Mega Sharpedo", slug: "sharpedo-mega", oras: true)],
+        323: [MegaForm(name: "Mega Camerupt", slug: "camerupt-mega", oras: true)],
+        334: [MegaForm(name: "Mega Altaria", slug: "altaria-mega", oras: true)],
+        359: [MegaForm(name: "Mega Absol", slug: "absol-mega", oras: false)],
+        373: [MegaForm(name: "Mega Salamence", slug: "salamence-mega", oras: true)],
+        376: [MegaForm(name: "Mega Metagross", slug: "metagross-mega", oras: true)],
+        445: [MegaForm(name: "Mega Garchomp", slug: "garchomp-mega", oras: false)],
+        448: [MegaForm(name: "Mega Lucario", slug: "lucario-mega", oras: false)],
+        460: [MegaForm(name: "Mega Abomasnow", slug: "abomasnow-mega", oras: false)],
+        475: [MegaForm(name: "Mega Gallade", slug: "gallade-mega", oras: true)],
+    ]
+}
+
+public struct MegaForm: Equatable, Sendable {
+    public let name: String
+    public let slug: String
+    public let oras: Bool
 }

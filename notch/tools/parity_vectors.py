@@ -18,7 +18,7 @@ sys.path.insert(0, REPO)
 import dashboard  # noqa: E402
 
 SALT = "0123456789abcdef"
-PROMPTS = [0, 2, 3, 11, 12, 29, 30, 69, 70, 400]
+PROMPTS = [0, 2, 3, 11, 12, 29, 30, 69, 70, 400, 75, 120]   # several Apex, so Megas get checked
 
 JS = r"""
 const fs=require("fs"),vm=require("vm");
@@ -27,10 +27,13 @@ const ctx={console,localStorage:{getItem:()=>null,setItem(){}},window:{},
 vm.createContext(ctx);
 for(const f of ["ui/app/01-creatures.js","ui/app/06-trainer-packs.js"])
   vm.runInContext(fs.readFileSync(f,"utf8"),ctx,{filename:f});
-vm.runInContext('cfg=function(){return {creaturePack:"pokemon"}};speciesHighWater=function(){return 0};',ctx);
+vm.runInContext('__pack="pokemon";cfg=function(){return {creaturePack:__pack}};speciesHighWater=function(){return 0};esc=function(s){return String(s)};',ctx);
 const inp=JSON.parse(fs.readFileSync(0,"utf8"));
 ctx.__in=inp;
-const out=vm.runInContext('__in.map(function(c){return {dex:pokeDexFor({species:c.species,stage:c.stage,_sid:c.sid}),hash:hashStr(c.sid)};})',ctx);
+const out=vm.runInContext('__in.map(function(c){var cr={species:c.species,stage:c.stage,_sid:c.sid,shiny:c.shiny};'+
+  '__pack="pokemon"; var r={dex:pokeDexFor(cr),hash:hashStr(c.sid),name2d:pokeCurrentName(cr)};'+
+  '__pack="pokemon3d"; var h=pokeImgFor(pokeDexFor(cr),cr,40,pokeCurrentName(cr)); r.src3d=/src="([^"]+)"/.exec(h)[1]; r.name3d=pokeCurrentName(cr);'+
+  'return r;})',ctx);
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -53,6 +56,7 @@ def main():
     for r, j in zip(rows, json.loads(js.stdout)):
         r["dex"] = j["dex"]
         r["hashStr"] = j["hash"]
+        r["name2d"], r["src3d"], r["name3d"] = j["name2d"], j["src3d"], j["name3d"]
     json.dump({"salt": SALT, "rows": rows}, sys.stdout, ensure_ascii=False)
 
 

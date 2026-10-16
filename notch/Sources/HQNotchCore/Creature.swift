@@ -98,18 +98,48 @@ public struct Creature: Equatable, Sendable {
         return line[line.count - 1]
     }
 
-    public func name(sessionId: String) -> String {
-        PokeData.names[dex(sessionId: sessionId)] ?? PokeData.real[species]
+    public func name(sessionId: String, pack: SpritePack = .gen5) -> String {
+        if let m = megaForm(sessionId: sessionId, pack: pack) { return m.name }
+        return PokeData.names[dex(sessionId: sessionId)] ?? PokeData.real[species]
+    }
+
+    /// JS `pokeMegaForm`: 3D pack only, Apex only, on the (branch-aware) final form; with
+    /// two Megas (Charizard X/Y) the session id picks one, as HQ does by default.
+    public func megaForm(sessionId: String, pack: SpritePack) -> MegaForm? {
+        guard pack == .threeD, stage >= 4, let fs = PokeData.mega[dex(sessionId: sessionId)], !fs.isEmpty else { return nil }
+        return fs.count > 1 ? fs[Int(Creature.hashStr(sessionId) % UInt32(fs.count))] : fs[0]
     }
 
     public static let animatedBase =
         "https://cdn.jsdelivr.net/gh/PokeAPI/sprites@master/sprites/pokemon/versions/generation-v/black-white/animated/"
     public static let staticBase = "https://cdn.jsdelivr.net/gh/PokeAPI/sprites@master/sprites/pokemon/"
 
-    /// Sprite URLs in fallback order (same hotlinks HQ uses; only the dex number is sent).
-    public func spriteURLs(sessionId: String) -> [URL] {
+    static let xyBase = "https://www.pkparaiso.com/imagenes/xy/sprites/animados"
+    static let orasBase = "https://www.pkparaiso.com/imagenes/rubi-omega-zafiro-alfa/sprites/animados"
+
+    /// Sprite URLs in fallback order: the same hotlinks HQ uses (JS `pokeImgFor` / `pokeErr`).
+    /// They carry only a Dex number or a species slug, never session data.
+    /// gen5: animated gif -> static png. 3D: X/Y (or ORAS for its Megas) animated gif -> HOME
+    /// still png; the 2D gif after that, so a blocked 3D host still shows a Pokémon.
+    public func spriteURLs(sessionId: String, pack: SpritePack = .gen5) -> [URL] {
         let d = dex(sessionId: sessionId), sh = shiny ? "shiny/" : ""
-        return ["\(Creature.animatedBase)\(sh)\(d).gif", "\(Creature.staticBase)\(sh)\(d).png"]
-            .compactMap(URL.init(string:))
+        let gen5 = ["\(Creature.animatedBase)\(sh)\(d).gif", "\(Creature.staticBase)\(sh)\(d).png"]
+        guard pack == .threeD else { return gen5.compactMap(URL.init(string:)) }
+        let mega = megaForm(sessionId: sessionId, pack: pack)
+        let slug = mega?.slug ?? (PokeData.names[d] ?? PokeData.real[species]).lowercased()
+            .filter { ("a"..."z").contains($0) || ("0"..."9").contains($0) }
+        let dir = (mega?.oras ?? false) ? Creature.orasBase : Creature.xyBase
+        return ["\(dir)\(shiny ? "-shiny" : "")/\(slug).gif", "\(Creature.staticBase)other/home/\(sh)\(d).png",
+                gen5[0]].compactMap(URL.init(string:))
+    }
+}
+
+/// Which sprites the notch draws. `.matchHQ` resolves to HQ's own `creaturePack`.
+public enum SpritePack: String, CaseIterable, Sendable {
+    case gen5 = "2d", threeD = "3d"
+
+    /// HQ's `creaturePack` setting -> a pack the notch can draw (only pokemon3d is 3D).
+    public static func fromHQ(_ creaturePack: String?) -> SpritePack {
+        creaturePack == "pokemon3d" ? .threeD : .gen5
     }
 }

@@ -60,6 +60,10 @@ final class NotchController {
             set(expanded: true)
             try? await Task.sleep(for: .seconds(2))
             snapshot(to: dir + "/notch-expanded.png")
+            autoOpenUntil = Date().addingTimeInterval(2)
+            model.showSettings = true
+            try? await Task.sleep(for: .seconds(1.5))
+            snapshot(to: dir + "/notch-settings.png")
             autoOpenUntil = nil   // back to normal hover behaviour
             try? await Task.sleep(for: .seconds(1.5))
             snapshot(to: dir + "/notch-after.png")   // collapsed again unless hovered
@@ -91,7 +95,8 @@ final class NotchController {
         let f = sc.frame
         panel.setFrame(NSRect(x: f.midX - Self.panelSize.width / 2, y: f.maxY - Self.panelSize.height,
                               width: Self.panelSize.width, height: Self.panelSize.height), display: true)
-        panel.contentView = NSHostingView(rootView: NotchRoot(model: model, notch: notch))
+        panel.contentView = NSHostingView(rootView: NotchRoot(model: model, notch: notch)
+            .environment(\.colorScheme, .dark))      // the notch is always black: dark system controls
     }
 
     /// Screen rect of what is currently drawn (closed pill or expanded panel).
@@ -131,7 +136,7 @@ final class NotchController {
     private func set(expanded: Bool) {
         model.expanded = expanded
         enteredAt = nil
-        if !expanded { leftAt = nil; panel.resignKey() }
+        if !expanded { leftAt = nil; model.showSettings = false; panel.resignKey() }
     }
 }
 

@@ -132,6 +132,7 @@ if CommandLine.arguments.count > 1 {
     let root = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
     let salt = root["salt"] as! String
     let rows = root["rows"] as! [[String: Any]]
+    var megas = 0
     for r in rows {
         let sid = r["sid"] as! String, prompts = r["prompts"] as! Int
         let c = Creature.local(sessionId: sid, prompts: prompts, salt: salt)
@@ -140,8 +141,14 @@ if CommandLine.arguments.count > 1 {
         expect(c.shiny == r["shiny"] as! Bool, "shiny \(sid)")
         expect(Int(Creature.hashStr(sid)) == r["hashStr"] as! Int, "hashStr \(sid)")
         expect(c.dex(sessionId: sid) == r["dex"] as! Int, "dex \(sid) stage \(c.stage)")
+        expect(c.name(sessionId: sid) == r["name2d"] as! String, "2D name \(sid)")
+        expect(c.name(sessionId: sid, pack: .threeD) == r["name3d"] as! String, "3D name \(sid) stage \(c.stage)")
+        expect(c.spriteURLs(sessionId: sid, pack: .threeD).first?.absoluteString == r["src3d"] as? String,
+               "3D sprite \(sid): \(c.spriteURLs(sessionId: sid, pack: .threeD).first?.absoluteString ?? "-") vs \(r["src3d"] ?? "-")")
+        if c.megaForm(sessionId: sid, pack: .threeD) != nil { megas += 1 }
     }
-    print("parity: \(rows.count) sessions checked against dashboard.py + 06-trainer-packs.js")
+    expect(megas > 0, "vectors include Mega forms")
+    print("parity: \(rows.count) sessions (\(megas) Megas) checked against dashboard.py + 06-trainer-packs.js, 2D and 3D")
 }
 
 print(failures == 0 ? "OK: \(checks) checks" : "FAILED: \(failures) of \(checks) checks")

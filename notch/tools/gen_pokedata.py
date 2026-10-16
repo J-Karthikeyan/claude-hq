@@ -30,12 +30,16 @@ def parse(js):
     branch = {}
     for idx, body in re.findall(r"(\d+):\[(\{.*?\})\]", _var(js, "POKE_BRANCH")):
         branch[int(idx)] = [int(d) for d in re.findall(r"dex:(\d+)", body)]
+    mega = {}
+    for key, body in re.findall(r"(\d+):\[(\{name:.*?\})\]", _var(js, "MEGA_FORMS")):
+        mega[int(key)] = [(n, sl, d) for n, sl, d in
+                          re.findall(r'name:"([^"]+)",slug:"([^"]+)",dir:"([a-z]+)"', body)]
     if len(evo) != 48 or len(real) != 48:
         raise SystemExit("gen_pokedata: expected 48 species, got %d/%d" % (len(evo), len(real)))
-    return evo, real, names, branch
+    return evo, real, names, branch, mega
 
 
-def render(evo, real, names, branch):
+def render(evo, real, names, branch, mega):
     def arr(xs):
         return "[" + ", ".join(str(x) for x in xs) + "]"
     lines = [
@@ -67,7 +71,26 @@ def render(evo, real, names, branch):
     items = sorted(names.items())
     for i in range(0, len(items), 6):
         lines.append("        " + " ".join("%d: %s," % (k, json.dumps(v)) for k, v in items[i:i + 6]))
-    lines += ["    ]", "}", ""]
+    lines += [
+        "    ]",
+        "    /// Mega forms by FINAL-form dex (3D pack, Apex only). oras: lives in the ORAS gallery.",
+        "    public static let mega: [Int: [MegaForm]] = [",
+    ]
+    for k, forms in sorted(mega.items()):
+        lines.append("        %d: [%s]," % (k, ", ".join(
+            "MegaForm(name: %s, slug: %s, oras: %s)" % (json.dumps(n), json.dumps(sl), "true" if d == "oras" else "false")
+            for n, sl, d in forms)))
+    lines += [
+        "    ]",
+        "}",
+        "",
+        "public struct MegaForm: Equatable, Sendable {",
+        "    public let name: String",
+        "    public let slug: String",
+        "    public let oras: Bool",
+        "}",
+        "",
+    ]
     return "\n".join(lines)
 
 

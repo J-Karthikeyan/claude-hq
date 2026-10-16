@@ -29,6 +29,14 @@ enum Theme {
     }
 }
 
+enum SpriteSetting: String, CaseIterable, Identifiable {
+    case twoD = "2d", threeD = "3d", matchHQ = "hq"
+    var id: String { rawValue }
+    var label: String {
+        switch self { case .twoD: "2D"; case .threeD: "3D"; case .matchHQ: "Match HQ" }
+    }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var store = SessionStore()
@@ -46,6 +54,19 @@ final class AppModel: ObservableObject {
     }
     @Published var approvals = UserDefaults.standard.object(forKey: "hqnotch.approvals") as? Bool ?? true {
         didSet { UserDefaults.standard.set(approvals, forKey: "hqnotch.approvals") }
+    }
+    /// Settings speaks in "on" terms.
+    var soundsOn: Bool { get { !muted } set { muted = !newValue } }
+    /// Which sprites to draw: 2D, 3D, or whatever pack HQ itself uses.
+    @Published var spriteSetting = SpriteSetting(rawValue: UserDefaults.standard.string(forKey: "hqnotch.sprites") ?? "") ?? .twoD {
+        didSet { UserDefaults.standard.set(spriteSetting.rawValue, forKey: "hqnotch.sprites") }
+    }
+    /// HQ's own pack (its `creaturePack`), for "Match HQ".
+    @Published private(set) var hqPack: SpritePack = .gen5
+    /// The settings view is showing in place of the session list.
+    @Published var showSettings = false
+    var pack: SpritePack {
+        switch spriteSetting { case .twoD: .gen5; case .threeD: .threeD; case .matchHQ: hqPack }
     }
     /// HQ's address; only 127.0.0.1 / localhost is ever used.
     let hqURL = UserDefaults.standard.string(forKey: "hqnotch.hqURL") ?? "http://127.0.0.1:8765"
@@ -93,6 +114,19 @@ final class AppModel: ObservableObject {
         return Dictionary(uniqueKeysWithValues: raw.compactMap { k, v in Int(k).map { ($0, v) } })
     }()
     private var floorFetchedAt: Date?
+
+    private var configFetchedAt: Date?
+    private func pollConfig(_ base: URL) async {
+        if let t = configFetchedAt, Date().timeIntervalSince(t) < 30 { return }
+        var req = URLRequest(url: base.appendingPathComponent("api/config"), timeoutInterval: 3)
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200,
+              let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        configFetchedAt = Date()
+        let p = SpritePack.fromHQ(o["creaturePack"] as? String)
+        if p != hqPack { hqPack = p }
+    }
 
     private func pollFloor(_ base: URL) async {
         if let t = floorFetchedAt, Date().timeIntervalSince(t) < 60 { return }   // Pokédex scans every transcript
@@ -152,6 +186,7 @@ final class AppModel: ObservableObject {
     private func effect(_ e: StoreEffect) {
         switch e {
         case .needsYou:
+            showSettings = false          // a request must never hide behind the settings view
             attention += 1
             play("Funk")
         case .finished:
@@ -202,6 +237,7 @@ final class AppModel: ObservableObject {
         hqReachable = true
         store.mergeHQ(HQSession.parse(data))
         await pollFloor(base)
+        await pollConfig(base)
     }
 
     /// HQ's per-install shiny salt (`.dex-seed` next to dashboard.py), so local fallback

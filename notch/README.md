@@ -56,7 +56,8 @@ Claude Code ──hooks──▶ hq_notch_hook.py ──Unix socket──▶ HQ 
   answers exactly the questions asked, with labels from their options (`answers_fit`).
 - **Local only.** The socket lives in a `0700` directory and is `0600`, and the app checks
   every peer's uid. The only network requests are the sprite hotlinks HQ already uses
-  (jsDelivr's mirror of PokeAPI; the URL carries only a National Dex number) and HQ on
+  (jsDelivr's mirror of PokeAPI, and PkParaíso for the 3D pack; the URL carries only a Dex
+  number or a species slug) and HQ on
   `127.0.0.1`. Prompts, commands and file paths never leave the machine.
 - **Same Pokémon as HQ.** `Creature.swift` ports `creature_for()` / `shiny_for_species()`
   from `dashboard.py` and `pokeDexFor()` from `ui/app/06-trainer-packs.js`. The evolution
@@ -64,12 +65,16 @@ Claude Code ──hooks──▶ hq_notch_hook.py ──Unix socket──▶ HQ 
   shows an earlier form than the highest stage you've reached with it: the notch reads each
   species' `maxStage` from HQ's `/api/pokedex` (at most once a minute, remembered while HQ is
   down). Not mirrored: manual branch picks (Eevee etc.), which live only in the browser.
-  Sprites are always the 2D animated pack.
+- **2D or 3D, your pick.** Settings → Sprites: **2D** (animated Gen 5; Apex = the line's final
+  form), **3D** (HQ's `pokemon3d` pack, with the Mega form at Apex when the species has one,
+  same default X/Y pick as HQ), or **Match HQ** (follows HQ's own `creaturePack`).
 - **Sprites are hotlinked, never bundled.** They are downloaded on first use and cached in
   `~/Library/Caches/HQNotch`. If the CDN is blocked, an original drawn blob takes their place.
 
-Menu bar (the hexagon icon): open HQ, sounds on/off, show idle sessions, approve from the
-notch on/off (off = every request goes straight to the terminal), quit.
+Settings: the gear in the notch's header. Sprites (2D / 3D / Match HQ, with a live preview of
+your sessions), sounds, show idle sessions, approve from the notch (off = every request goes
+straight to the terminal), quit. A permission prompt always closes settings so it is never
+hidden. The menu bar icon (hexagon) has the same toggles.
 
 ## Develop
 

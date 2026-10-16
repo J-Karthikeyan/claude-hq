@@ -79,12 +79,13 @@ struct CreatureSprite: View {
     let creature: Creature
     let status: SessionStatus
     var size: CGFloat = 44
+    var pack: SpritePack = .gen5
     @State private var image: NSImage?
     @State private var phase = false
     @State private var poked = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var key: String { "\(creature.species)-\(creature.stage)-\(creature.shiny)-\(sessionId)" }
+    private var key: String { "\(creature.species)-\(creature.stage)-\(creature.shiny)-\(pack.rawValue)-\(sessionId)" }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -115,10 +116,10 @@ struct CreatureSprite: View {
         .contentShape(Rectangle())
         .onTapGesture { poked += 1; Task { try? await Task.sleep(for: .milliseconds(260)); poked += 1 } }
         .task(id: key) {
-            image = await SpriteCache.shared.image(creature.spriteURLs(sessionId: sessionId))
+            image = await SpriteCache.shared.image(creature.spriteURLs(sessionId: sessionId, pack: pack))
         }
         .onAppear { phase.toggle() }
-        .accessibilityLabel(creature.name(sessionId: sessionId))
+        .accessibilityLabel(creature.name(sessionId: sessionId, pack: pack))
     }
 
     private var offset: CGFloat {
