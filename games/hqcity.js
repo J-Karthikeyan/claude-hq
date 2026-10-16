@@ -1,16 +1,18 @@
 /* Claude HQ 2.1: Arena City, the street of open HQs.
  *
- * Everyone who opened their HQ to visitors has a building on one round street:
- * a ring road around a plaza, each HQ on its own lot facing the middle, built from
- * that HQ's level, paint, accent, sign (its name, on the banners) and decor. Your
- * own building is one of them. Walk up to someone's front door to go into their
- * HQ as a visitor (their Lobby); your own door takes you into your Lobby.
+ * Everyone who opened their HQ to visitors has a building in a city of square blocks:
+ * a grid of roads, the plaza on the middle block, each HQ on a block of its own facing
+ * the road, built from that HQ's level, paint, accent, sign (its name, on the banners)
+ * and decor. Your own building is one of them. Walk up to someone's front door to go
+ * into their HQ as a visitor (their Lobby); your own door takes you into your Lobby.
+ * Every tab of HQ has a building too (games/hqbase.js, HQV.hqViews): its door opens it.
  *
  * A floor of the 3D HQ: registered as HQV.hqWorlds.city and built by games/hq3d.js.
  * The street comes from ctx.api.city() (the Arena's list of open HQs: counts and
  * cosmetics only) and is rebuilt when that list changes (w.onCity). Everyone gets
- * the same layout from the same list (sorted by user id), so the people walking the
- * street (live presence, room "hq_city") stand in the same places for everyone.
+ * the same layout from the same list (sorted by user id; the view buildings are a fixed
+ * list), so the people walking the street (live presence, room "hq_city") stand in the
+ * same places for everyone.
  */
 (function(){
 "use strict";
@@ -18,9 +20,14 @@ var HQV = window.HQV = window.HQV || {};
 HQV.hqWorlds = HQV.hqWorlds || {};
 
 var MAX_LOTS = 12;          // an Arena has a handful of members (5 today); room to spare
-var LOT_ARC = 36;           // street frontage per building: a whole campus with both wings (m)
+var BLOCK_W = 36, BLOCK_D = 26;   // a block: room for a whole campus with both wings (m)
+var ROAD = 8;               // the road round every block (m)
+var HQ_Z = 2, VIEW_Z = 6;   // how far forward of the block's middle each kind of building stands
+var VIEW_DEPTH = 7;         // a view building's depth (games/hqbase.js VB_D)
 
-// The street's layout from the list: who stands where. Pure, so it is easy to test.
+// The city's layout from the list: who stands on which block. Pure, so it is easy to test.
+// The plaza takes the middle block; HQs the blocks nearest it (by user id), then the view
+// buildings. Every building faces +z, onto the road along the front of its block.
 function layout(list){
   var hs = (list || []).filter(function(h){ return h && typeof h.userId === "string"; })
     .sort(function(a, b){ return a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0; });
@@ -29,12 +36,21 @@ function layout(list){
     hs = hs.filter(function(h){ return !h.isYou; }).slice(0, MAX_LOTS - you.length).concat(you)
       .sort(function(a, b){ return a.userId < b.userId ? -1 : 1; });
   }
-  var n = Math.max(1, hs.length), R = Math.max(30, n*LOT_ARC/(2*Math.PI));
-  return {R: R, lots: hs.map(function(h, i){
-    var a = i/n*Math.PI*2 + Math.PI/2, rb = R + 13, dx = -Math.cos(a), dz = -Math.sin(a);   // dx/dz: towards the middle
-    return {h: h, a: a, x: Math.cos(a)*rb, z: Math.sin(a)*rb, rot: Math.atan2(dx, dz), dx: dx, dz: dz,
-            door: {x: Math.cos(a)*(rb - 4.8), z: Math.sin(a)*(rb - 4.8)}};      // under the canopy
-  })};
+  var views = HQV.hqViews || [];
+  var n = hs.length + views.length + 1, cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n/cols);
+  var PX = BLOCK_W + ROAD, PZ = BLOCK_D + ROAD;
+  function cx(i){ return (i - (cols - 1)/2)*PX; }
+  function cz(j){ return (j - (rows - 1)/2)*PZ; }
+  var pi = Math.floor((cols - 1)/2), pj = Math.floor((rows - 1)/2), cells = [];
+  for(var j = 0; j < rows; j++) for(var i = 0; i < cols; i++) if(i !== pi || j !== pj) cells.push({i: i, j: j, d: (i - pi)*(i - pi) + (j - pj)*(j - pj)});
+  cells.sort(function(a, b){ return a.d - b.d || a.j - b.j || a.i - b.i; });
+  function lot(cell, dz, front){
+    var x = cx(cell.i), z = cz(cell.j) + dz;
+    return {x: x, z: z, rot: 0, dx: 0, dz: 1, block: {x: cx(cell.i), z: cz(cell.j)}, door: {x: x, z: z + front}};
+  }
+  return {cols: cols, rows: rows, W: cols*PX, D: rows*PZ, plaza: {x: cx(pi), z: cz(pj)},
+    lots: hs.map(function(h, k){ return Object.assign(lot(cells[k], HQ_Z, 4.8), {h: h}); }),          // under the canopy
+    views: views.map(function(v, k){ return Object.assign(lot(cells[hs.length + k], VIEW_Z, VIEW_DEPTH/2 + 1.2), {v: v}); })};
 }
 HQV.hqCityLayout = layout;
 function nameOf(h){
@@ -64,13 +80,13 @@ HQV.hqWorlds.city = function(c, w){
   paveT.t.wrapS = paveT.t.wrapT = THREE.RepeatWrapping;
 
   var streetG = new THREE.Group(); S.add(streetG);
-  var city = {R: 24, lots: []}, sig = null, lampGlows = [], cars = [], dyn = {facMats: [], glows: [], beacons: [], flags: [], leds: []};
+  var city = {W: 80, D: 60, plaza: {x: 0, z: 0}, lots: [], views: []}, sig = null, lampGlows = [], cars = [], dyn = {facMats: [], glows: [], beacons: [], flags: [], leds: []};
   var fount = null, bikes = [];
   var floor = null;
   function flat(geo, m, y){ var o = new THREE.Mesh(geo, m); o.rotation.x = -PI/2; o.position.y = y; o.receiveShadow = true; streetG.add(o); return o; }
 
   // one HQ on its lot: the same building as that HQ's own Base (games/hqbase.js), front facing the middle
-  var lotsB = [];
+  var lotsB = [], viewsB = [];
   function building(L){
     var h = L.h, cos = h.cos || {}, crew = h.crew || {}, name = nameOf(h);
     var g = new THREE.Group(); g.position.set(L.x, 0, L.z); g.rotation.y = L.rot; streetG.add(g);
@@ -93,58 +109,85 @@ HQV.hqWorlds.city = function(c, w){
     B.hits.forEach(function(o){ hits.push(o); }); B.doors.forEach(function(d){ doors.push(d); });
     L.B = B; L.H = B.top() + 2; L.fade = {g: B.g, on: false}; lotsB.push(B);
   }
+  // one tab's building (games/hqbase.js): its door opens that tab
+  function viewBuilding(L){
+    var V = HQV.hqViewBuilding(c, L.v, {doorFront: function(){ return new THREE.Vector3(L.door.x, 0, L.door.z); }});
+    V.g.position.set(L.x, 0, L.z); V.g.rotation.y = L.rot; streetG.add(V.g); V.setNight(night);
+    V.hits.forEach(function(o){ hits.push(o); }); V.doors.forEach(function(d){ doors.push(d); });
+    L.B = V; L.H = V.top() + 2; L.fade = {g: V.g, on: false}; viewsB.push(V);
+  }
 
   function build(){
     var list = (api.city && api.city()) || [];
     var key = JSON.stringify(list.map(function(h){ return [h.userId, h.level, h.look, h.cos, h.crew, !!h.isYou]; }));
     if(key === sig) return; sig = key;
     while(streetG.children.length) streetG.remove(streetG.children[0]);
-    hits.length = 0; doors.length = 0; lampGlows.length = 0; cars.length = 0; lotsB.length = 0;
+    hits.length = 0; doors.length = 0; lampGlows.length = 0; cars.length = 0; lotsB.length = 0; viewsB.length = 0;
     dyn = {facMats: [], glows: [], beacons: [], flags: [], leds: []};
     city = layout(list);
-    var R = city.R, OUT = R + 34;
-    var gm = new THREE.MeshStandardMaterial({map: grassT.t, roughness: 0.95}); grassT.t.repeat.set(OUT/6, OUT/6);
-    floor = flat(new THREE.CircleGeometry(OUT, 96), gm, 0);
-    flat(new THREE.RingGeometry(R - 3, R + 3, 128), mat(0x2a2f36, {roughness: 0.9}), 0.03);
-    [R - 3.1, R + 3.1].forEach(function(r){ flat(new THREE.RingGeometry(r - 0.12, r + 0.12, 128), mat(0x8e9aa6), 0.04); });
-    var nd = Math.floor(2*PI*R/2.6), dash = new THREE.InstancedMesh(new THREE.BoxGeometry(1.2, 0.02, 0.14), new THREE.MeshBasicMaterial({color: 0xffc86e, toneMapped: false}), nd);
+    var W = city.W, D = city.D, PX = BLOCK_W + ROAD, PZ = BLOCK_D + ROAD, P = city.plaza;
+    var OX = W/2 + 22, OZ = D/2 + 22;                                   // the edge of the world, past the trees
+    var gm = new THREE.MeshStandardMaterial({map: grassT.t, roughness: 0.95}); grassT.t.repeat.set(OX/6, OZ/6);
+    floor = flat(new THREE.PlaneGeometry(2*OX, 2*OZ), gm, 0);
+    // the roads: one along every row and column edge of the blocks, kerbs and a dashed middle line
+    var roadM = mat(0x2a2f36, {roughness: 0.9}), kerbM = mat(0x8e9aa6), dashes = [];
+    var xs = [], zs = [];
+    for(var ri = 0; ri <= city.cols; ri++) xs.push(-W/2 + ri*PX);
+    for(var rj = 0; rj <= city.rows; rj++) zs.push(-D/2 + rj*PZ);
+    zs.forEach(function(z){ flat(new THREE.PlaneGeometry(W + ROAD, ROAD), roadM, 0.03).position.z = z;
+      for(var x = -W/2; x < W/2; x += 2.6) if(!xs.some(function(x2){ return Math.abs(x - x2) < ROAD/2 + 0.6; })) dashes.push([x, z, 0]); });
+    xs.forEach(function(x){ flat(new THREE.PlaneGeometry(ROAD, D + ROAD), roadM, 0.031).position.x = x;
+      for(var z = -D/2; z < D/2; z += 2.6) if(!zs.some(function(z2){ return Math.abs(z - z2) < ROAD/2 + 0.6; })) dashes.push([x, z, PI/2]); });
+    var dash = new THREE.InstancedMesh(new THREE.BoxGeometry(1.2, 0.02, 0.14), new THREE.MeshBasicMaterial({color: 0xffc86e, toneMapped: false}), Math.max(1, dashes.length));
     var m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
-    for(var i = 0; i < nd; i++){ var a = i/nd*PI*2; q.setFromAxisAngle(up, -a + PI/2); m4.compose(new THREE.Vector3(Math.cos(a)*R, 0.05, Math.sin(a)*R), q, new THREE.Vector3(1, 1, 1)); dash.setMatrixAt(i, m4); }
-    streetG.add(dash);
-    paveT.t.repeat.set(R/5, R/5);
-    flat(new THREE.CircleGeometry(R - 3.3, 96), new THREE.MeshStandardMaterial({map: paveT.t, roughness: 0.9}), 0.025);
-    flat(new THREE.RingGeometry(R + 3.3, R + 6, 128), new THREE.MeshStandardMaterial({map: paveT.t, roughness: 0.9}), 0.025);
-    // the plaza in the middle: a fountain, the bike park beside it, and the city's name
-    fount = fountain(); streetG.add(fount.g);
-    bikes = bikePark(8.6);
-    var cityL = c.label("Arena City · " + city.lots.length + " HQ" + (city.lots.length === 1 ? "" : "s"), HEX.amber, 1.3); cityL.position.set(0, 6.4, 0); streetG.add(cityL);
-    var tr = c.rng(77);
-    for(var p = 0; p < 12; p++){ var pa = p/12*PI*2, px = Math.cos(pa)*(R - 8), pz = Math.sin(pa)*(R - 8); if(R - 8 < 5) break;
-      var tg = new THREE.Group(); tg.position.set(px, 0, pz); streetG.add(tg); cyl(0.2, 0.28, 1.2, mat(0x5a3d2a), 0, 0.6, 0, tg, 8); sph(1.2, mat(0x3c8a4f, {roughness: 0.9}), 0, 2.1, 0, tg); }
+    dashes.forEach(function(d, n){ q.setFromAxisAngle(up, d[2]); m4.compose(new THREE.Vector3(d[0], 0.05, d[1]), q, new THREE.Vector3(1, 1, 1)); dash.setMatrixAt(n, m4); });
+    dash.count = dashes.length; streetG.add(dash);
+    // the blocks: a paved pavement round a lawn; the plaza block is paved all over
+    paveT.t.repeat.set(BLOCK_W/5, BLOCK_D/5);
+    var paveM = new THREE.MeshStandardMaterial({map: paveT.t, roughness: 0.9});
+    for(var bi = 0; bi < city.cols; bi++) for(var bj = 0; bj < city.rows; bj++){
+      var bx = -W/2 + (bi + 0.5)*PX, bz = -D/2 + (bj + 0.5)*PZ;
+      var pv = flat(new THREE.PlaneGeometry(BLOCK_W, BLOCK_D), paveM, 0.02); pv.position.x = bx; pv.position.z = bz;
+      var kb = flat(new THREE.PlaneGeometry(BLOCK_W + 0.3, BLOCK_D + 0.3), kerbM, 0.018); kb.position.x = bx; kb.position.z = bz;
+      if(bx === P.x && bz === P.z) continue;
+      var lawn = flat(new THREE.PlaneGeometry(BLOCK_W - 4, BLOCK_D - 4), gm, 0.022); lawn.position.x = bx; lawn.position.z = bz;
+    }
+    // the plaza on the middle block: a fountain, the bike park beside it, and the city's name
+    fount = fountain(); fount.g.position.set(P.x, 0, P.z); streetG.add(fount.g);
+    bikes = bikePark(P.x + 8.6, P.z);
+    var nb = city.lots.length;
+    var cityL = c.label("Arena City · " + nb + " HQ" + (nb === 1 ? "" : "s"), HEX.amber, 1.3); cityL.position.set(P.x, 6.4, P.z); streetG.add(cityL);
+    function tree(x, z, sc){ var tg = new THREE.Group(); tg.position.set(x, 0, z); tg.scale.setScalar(sc); streetG.add(tg);
+      cyl(0.2, 0.28, 1.2, mat(0x5a3d2a), 0, 0.6, 0, tg, 8);
+      for(var cn = 0; cn < 3; cn++) c.add(new THREE.Mesh(new THREE.ConeGeometry(1.3 - cn*0.3, 1.6, 8), mat([0x2f6b45, 0x2a5f3d, 0x357a4f][cn])), 0, 1.6 + cn*0.9, 0, tg); }
+    [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function(k){ var pt = new THREE.Group(); pt.position.set(P.x + k[0]*(BLOCK_W/2 - 3), 0, P.z + k[1]*(BLOCK_D/2 - 3)); streetG.add(pt);
+      cyl(0.2, 0.28, 1.2, mat(0x5a3d2a), 0, 0.6, 0, pt, 8); sph(1.2, mat(0x3c8a4f, {roughness: 0.9}), 0, 2.1, 0, pt); });
+    // street lamps on the corner of every crossing
     function lamp(x, z){ cyl(0.07, 0.1, 3.4, mat(0x2b3a48, {metalness: 0.6}), x, 1.7, z, streetG, 8); sph(0.16, emis(0xfff1d6, 0xffd9a0, 2), x, 3.3, z, streetG);
       var gl = c.glow(0xffd9a0, 2.2, 0.8); gl.position.set(x, 3.25, z); streetG.add(gl); lampGlows.push(gl); }
-    var nl = Math.max(10, Math.floor(2*PI*R/9));
-    for(var l = 0; l < nl; l++){ var la = (l + 0.5)/nl*PI*2; lamp(Math.cos(la)*(R - 3.8), Math.sin(la)*(R - 3.8)); }
-    // trees behind the lots
-    for(var t = 0; t < Math.min(160, city.lots.length*5 + 30); t++){
-      var ta = tr()*PI*2, trr = R + 24 + tr()*8, tx = Math.cos(ta)*trr, tz = Math.sin(ta)*trr;
-      var tgg = new THREE.Group(); tgg.position.set(tx, 0, tz); tgg.scale.setScalar(0.8 + tr()*0.6); streetG.add(tgg);
-      cyl(0.2, 0.28, 1.2, mat(0x5a3d2a), 0, 0.6, 0, tgg, 8);
-      for(var cn = 0; cn < 3; cn++) c.add(new THREE.Mesh(new THREE.ConeGeometry(1.3 - cn*0.3, 1.6, 8), mat([0x2f6b45, 0x2a5f3d, 0x357a4f][cn])), 0, 1.6 + cn*0.9, 0, tgg);
+    xs.forEach(function(x){ zs.forEach(function(z){ lamp(x + ROAD/2 + 0.8, z + ROAD/2 + 0.8); }); });
+    // trees round the edge of the city
+    var tr = c.rng(77), nt = Math.min(160, Math.round((W + D)/3));
+    for(var t = 0; t < nt; t++){
+      var side = tr()*4 | 0, u = tr()*2 - 1, out = ROAD/2 + 4 + tr()*12;
+      var tx = side < 2 ? u*(W/2 + 10) : (side === 2 ? -1 : 1)*(W/2 + out), tz = side < 2 ? (side === 0 ? -1 : 1)*(D/2 + out) : u*(D/2 + 10);
+      tree(tx, tz, 0.8 + tr()*0.6);
     }
-    // cars round the street
-    [[0xd14a5c, 0.25], [0x4a7bd1, -0.2], [0xe0e4e8, 0.22], [0xffb347, -0.18], [0x3fa66a, 0.2], [0x8a4ad1, -0.24]].forEach(function(cd, n){
+    // cars round the road on the edge of the city: [colour, speed (m/s; the sign is the way round)]
+    [[0xd14a5c, 6], [0x4a7bd1, -5], [0xe0e4e8, 5.5], [0xffb347, -4.5], [0x3fa66a, 5], [0x8a4ad1, -6]].forEach(function(cd, n){
       var k = new THREE.Group(), bodyM = mat(cd[0], {metalness: 0.6, roughness: 0.3});
       box(1.9, 0.45, 0.95, bodyM, 0, 0.42, 0, k); box(1.0, 0.42, 0.85, mat(0x0b1622, {metalness: 0.6, roughness: 0.15}), -0.1, 0.82, 0, k);
-      streetG.add(k); cars.push({g: k, a: n/6*PI*2, v: cd[1]*24/R, r: R + (cd[1] > 0 ? -1.4 : 1.4)});
+      var lane = cd[1] > 0 ? -1.4 : 1.4, ax = W/2 + lane, az = D/2 + lane;
+      streetG.add(k); cars.push({g: k, s: n/6*2*(2*ax + 2*az), v: cd[1], ax: ax, az: az});
     });
     city.lots.forEach(building);
-    w.floor = floor; w.bounds = [-OUT + 2, OUT - 2, -OUT + 2, OUT - 2];
+    city.views.forEach(viewBuilding);
+    w.floor = floor; w.bounds = [-OX + 2, OX - 2, -OZ + 2, OZ - 2];
     // arriving: at your own door, or the door of the HQ you just visited
     var mine = city.lots.filter(function(L){ return L.h.isYou; })[0];
     var back = api.cityReturn && api.cityReturn(), ret = city.lots.filter(function(L){ return L.h.userId === back; })[0];
     // the camera stands on the street side, looking at the building's front (a little off-axis)
-    function at(L){ return L ? {x: L.door.x + L.dx*2.6, z: L.door.z + L.dz*2.6, yaw: Math.atan2(L.dx, L.dz), camYaw: L.rot + 0.55} : {x: 0, z: R - 6, yaw: PI}; }
+    function at(L){ return L ? {x: L.door.x + L.dx*2.6, z: L.door.z + L.dz*2.6, yaw: Math.atan2(L.dx, L.dz), camYaw: L.rot + 0.55} : {x: P.x, z: P.z + 7, yaw: 0}; }
     w.spawn = at(ret || mine); w.spawnFrom = {lobby: at(mine)};
     applyTime();
   }
@@ -210,8 +253,8 @@ HQV.hqWorlds.city = function(c, w){
 
   /* ---------- the bike park: a rack of bikes beside the fountain ---------- */
   // Walk up to one and press E (hq3d.js does the riding). w.bikes lists them: {g, x, z, yaw, color}.
-  function bikePark(cx){
-    var list = [], g = new THREE.Group(); g.position.set(cx, 0, 0); streetG.add(g);
+  function bikePark(cx, cz){
+    var list = [], g = new THREE.Group(); g.position.set(cx, 0, cz); streetG.add(g);
     var padT = c.canvasTex(128, 256, function(gx){ gx.fillStyle = "#4a5866"; gx.fillRect(0, 0, 128, 256); gx.strokeStyle = "rgba(255,255,255,.35)"; gx.lineWidth = 3;
       for(var y = 20; y < 256; y += 39){ gx.beginPath(); gx.moveTo(14, y); gx.lineTo(114, y); gx.stroke(); } });
     var pad = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 9.6), new THREE.MeshStandardMaterial({map: padT.t, roughness: 0.85}));
@@ -224,22 +267,22 @@ HQV.hqWorlds.city = function(c, w){
       var z = -3.75 + i*1.5;
       var hoop = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.03, 6, 20, PI), steel); hoop.position.set(-0.7, 0.05, z); hoop.rotation.y = PI/2; hoop.castShadow = true; g.add(hoop);
       var B = c.bike(cols[i]); B.g.position.set(0, 0, z); B.g.rotation.y = -PI/2; g.add(B.g);   // facing the fountain
-      list.push({g: B.g, x: cx, z: z, yaw: -PI/2, color: cols[i]});
+      list.push({g: B.g, x: cx, z: cz + z, yaw: -PI/2, color: cols[i]});
     }
     var sign = c.label("\uD83D\uDEB2 Bike park · press E", HEX.green, 0.7); sign.position.set(0.9, 2.6, 0); g.add(sign);
     return list;
   }
 
   function applyTime(){
-    lotsB.forEach(function(B){ B.setNight(night); });
+    lotsB.concat(viewsB).forEach(function(B){ B.setNight(night); });
     lampGlows.forEach(function(g){ g.material.opacity = night ? 0.85 : 0.08; });
   }
   function blocked(x, z){
-    var R = city.R;
-    if(Math.hypot(x, z) > R + 31) return true;
-    if(Math.hypot(x, z) < FOUNT_R + 0.35) return true;            // the fountain
-    for(var i = 0; i < city.lots.length; i++){
-      var L = city.lots[i], rx = x - L.x, rz = z - L.z, c0 = Math.cos(-L.rot), s0 = Math.sin(-L.rot);
+    if(Math.abs(x) > city.W/2 + 18 || Math.abs(z) > city.D/2 + 18) return true;
+    if(Math.hypot(x - city.plaza.x, z - city.plaza.z) < FOUNT_R + 0.35) return true;   // the fountain
+    var all = city.lots.concat(city.views);
+    for(var i = 0; i < all.length; i++){
+      var L = all[i], rx = x - L.x, rz = z - L.z, c0 = Math.cos(-L.rot), s0 = Math.sin(-L.rot);
       var lx = rx*c0 + rz*s0, lz = -rx*s0 + rz*c0;              // into the lot's own frame
       if(L.B && L.B.blockedLocal(lx, lz)) return true;
     }
@@ -253,31 +296,25 @@ HQV.hqWorlds.city = function(c, w){
   w.onCity = function(){ build(); };
   w.setTime = function(n){ night = n; S.background = n ? skyBg.night : skyBg.day; S.fog = new THREE.Fog(n ? 0x0f1f30 : 0xb8dcf2, 90, 220);
     hemi.intensity = n ? 1.3 : 2.4; sun.intensity = n ? 0.7 : 2.4; sun.color.set(n ? 0xa9b8ff : 0xfff2dc);
-    var sc = sun.shadow.camera, R = city.R + 30; sc.left = -R; sc.right = R; sc.top = R; sc.bottom = -R; sc.far = 260; sc.updateProjectionMatrix(); applyTime(); };
+    var sc = sun.shadow.camera, R = Math.max(city.W, city.D)/2 + 30; sc.left = -R; sc.right = R; sc.top = R; sc.bottom = -R; sc.far = 260; sc.updateProjectionMatrix(); applyTime(); };
   w.onLook = function(){ sig = null; build(); };
-  // A building between you and the camera fades, so you are never lost behind a tower.
-  function fade(L, on){
-    if(L.fade.on === on) return; L.fade.on = on;
-    L.fade.g.traverse(function(o){ if(!o.isMesh) return; (Array.isArray(o.material) ? o.material : [o.material]).forEach(function(m){
-      if(m.userData.op == null){ m.userData.op = m.opacity; m.userData.tr = m.transparent; }
-      m.transparent = on || m.userData.tr; m.opacity = on ? 0.16 : m.userData.op; m.depthWrite = !on; m.needsUpdate = true; }); o.castShadow = !on; });
-  }
+  // A building between you and the camera fades (games/hqbase.js), so you are never lost behind a tower.
   var fadeAcc = 0;
-  function cutaway(){
-    var me = c.avatar(), v = c.view && c.view(); if(!me || !v) return;
-    var ux = Math.sin(v.yaw), uz = Math.cos(v.yaw), tp = Math.max(0.2, Math.tan(v.pitch));
-    city.lots.forEach(function(L){
-      if(!L.fade) return;
-      var vx = L.x - me.x, vz = L.z - me.z, along = vx*ux + vz*uz, side = Math.abs(vx*uz - vz*ux);
-      fade(L, along > 2 && side < 14 && along < L.H/tp + 8);
-    });
+  function cutaway(){ HQV.hqCutaway(c, city.lots.concat(city.views)); }
+  // a point s metres round the rectangle with half-sides ax, az (clockwise seen from above), and its heading
+  function rectAt(s, ax, az){
+    var per = 4*(ax + az); s = ((s % per) + per) % per;
+    if(s < 2*ax) return {x: -ax + s, z: -az, dx: 1, dz: 0}; s -= 2*ax;
+    if(s < 2*az) return {x: ax, z: -az + s, dx: 0, dz: 1}; s -= 2*az;
+    if(s < 2*ax) return {x: ax - s, z: az, dx: -1, dz: 0}; s -= 2*ax;
+    return {x: -ax, z: az - s, dx: 0, dz: -1};
   }
   w.update = function(t, dt, k){
     fadeAcc += dt; if(fadeAcc > 0.15){ fadeAcc = 0; cutaway(); }
-    lotsB.forEach(function(B){ B.animate(t, dt, k); });
+    lotsB.concat(viewsB).forEach(function(B){ B.animate(t, dt, k); });
     fountainStep(t);
-    cars.forEach(function(cr){ cr.a += cr.v*dt*k; var x = Math.cos(cr.a)*cr.r, z = Math.sin(cr.a)*cr.r, dx = -Math.sin(cr.a)*cr.v, dz = Math.cos(cr.a)*cr.v;
-      cr.g.position.set(x, 0, z); cr.g.rotation.y = Math.atan2(-dz, dx); });
+    cars.forEach(function(cr){ cr.s += cr.v*dt*k; var p = rectAt(cr.s, cr.ax, cr.az), sg = cr.v < 0 ? -1 : 1;
+      cr.g.position.set(p.x, 0, p.z); cr.g.rotation.y = Math.atan2(-p.dz*sg, p.dx*sg); });
   };
   return w;
 };
