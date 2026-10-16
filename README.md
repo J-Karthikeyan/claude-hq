@@ -340,6 +340,8 @@ and feature guide.
   *Privacy:* local Unix socket only; no new egress beyond HQ's existing sprite hotlinks.
   Questions are caught by a dedicated `AskUserQuestion` pre-tool hook as well as the permission
   hook, without being asked twice (re-run the installer to add it).
+  Notch creatures follow HQ's evolution floor (each species' highest stage from the Pokédex), so a
+  new session of an evolved species shows its evolved form; the notch opens after a 0.5 s hover.
 
 - **2.5.0** — **Make + compete.** Build your own maps, share them, and compete on them every week.
   - **Track Editor**: paint a kart loop on a grid, see a live check, test-drive it, save it and race it
