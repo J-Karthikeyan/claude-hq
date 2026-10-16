@@ -257,7 +257,9 @@ public struct HQSession: Sendable, Equatable {
             let status: SessionStatus = raw == "working" ? .working : raw == "needs" ? .needs : .idle
             var cr: Creature?
             if let c = o["creature"] as? [String: Any], let sp = c["species"] as? Int {
-                cr = Creature(species: sp, stage: (c["stage"] as? Int) ?? 0, shiny: (c["shiny"] as? Bool) ?? false)
+                let evo = c["evo"] as? [String: Any]                     // a branch / Mega picked in HQ
+                cr = Creature(species: sp, stage: (c["stage"] as? Int) ?? 0, shiny: (c["shiny"] as? Bool) ?? false,
+                              branchDex: evo?["branchDex"] as? Int, megaSlug: evo?["megaSlug"] as? String)
             }
             let live = ["working", "needs", "idle"].contains(raw) && (o["source"] as? String ?? "claude") == "claude"
                 && (o["stale"] as? Bool) != true && (o["kind"] as? String) == "interactive" && o["pid"] is Int

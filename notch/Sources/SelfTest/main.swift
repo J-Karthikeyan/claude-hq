@@ -42,6 +42,20 @@ expect(electrike.floored(floor).name(sessionId: "s") == "Manectric", "floored na
 expect(Creature(species: 38, stage: 4, shiny: false).floored([38: 1]).stage == 4, "floor never lowers")
 expect(electrike.floored([:]) == electrike, "no floor = unchanged")
 
+// a branch / Mega picked in HQ (creature.evo) wins over the hashed default; a bad one is ignored
+let eevee = Creature(species: 4, stage: 4, shiny: false)
+expect(Creature(species: 4, stage: 4, shiny: false, branchDex: 197).dex(sessionId: "abc") == 197, "picked Umbreon")
+expect(Creature(species: 4, stage: 4, shiny: false, branchDex: 25).dex(sessionId: "abc") == eevee.dex(sessionId: "abc"), "bad branch ignored")
+expect(Creature(species: 4, stage: 1, shiny: false, branchDex: 197).dex(sessionId: "abc") == 133, "a pick waits for the final form")
+expect(Creature(species: 4, stage: 0, shiny: false, branchDex: 197).floored([4: 4]).dex(sessionId: "abc") == 197, "floored keeps the pick")
+let zardY = Creature(species: 1, stage: 4, shiny: false, megaSlug: "charizard-megay")
+expect(zardY.megaForm(sessionId: "s", pack: .threeD)?.name == "Mega Charizard Y", "picked Mega Y")
+expect(zardY.megaForm(sessionId: "s", pack: .gen5) == nil, "no Mega in 2D")
+expect(Creature(species: 1, stage: 4, shiny: false, megaSlug: "gengar-mega").megaForm(sessionId: "s", pack: .threeD)
+       == Creature(species: 1, stage: 4, shiny: false).megaForm(sessionId: "s", pack: .threeD), "bad Mega ignored")
+let evoJSON = #"{"sessions":[{"sessionId":"e","status":"idle","kind":"interactive","pid":1,"creature":{"species":4,"stage":4,"shiny":false,"evo":{"branchDex":700}}}]}"#
+expect(HQSession.parse(Data(evoJSON.utf8)).first?.creature?.dex(sessionId: "e") == 700, "creature.evo parsed: Sylveon")
+
 // MARK: store lifecycle
 
 var st = SessionStore()

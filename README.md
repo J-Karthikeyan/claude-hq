@@ -207,7 +207,7 @@ See [`notch/README.md`](notch/README.md). `--uninstall` removes it all again.
   list cannot be read (e.g. the `claude` CLI is missing), Close is refused with `503`.
 - POST bodies are capped at 1 MiB (8 MiB for soundboard uploads); larger requests get `413` (sent
   without reading the body, so a client mid-upload may see a connection reset instead).
-- Local state files (`config.json`, `sessions-meta.json`, `arena-link.json`, `.dex-seed`) are written
+- Local state files (`config.json`, `sessions-meta.json`, `evo-choices.json`, `arena-link.json`, `.dex-seed`) are written
   atomically with `0600` permissions. A file that no longer parses is set aside as
   `<name>.corrupt-<timestamp>` (git-ignored) and defaults are used, so nothing is silently overwritten.
   A symlinked state file is written through (the link is kept, the target replaced).
@@ -235,6 +235,7 @@ See [`notch/README.md`](notch/README.md). `--uninstall` removes it all again.
 | `config.json` | Your settings (theme, pack, budget, …). Created on first save. *(git-ignored)* |
 | `sessions-meta.json` | Per-session pins / tags / notes / rename aliases. *(git-ignored)* |
 | `meals.json` | Which session ate which snack (local only). *(git-ignored)* |
+| `evo-choices.json` | The branch / Mega form you picked per session (local only; `POST /api/evo-choice`). *(git-ignored)* |
 
 ### HTTP API (all `127.0.0.1` only)
 `GET /` · `GET /api/sessions` · `GET /api/stream` (SSE) · `GET /api/session/<id>` ·
@@ -242,7 +243,7 @@ See [`notch/README.md`](notch/README.md). `--uninstall` removes it all again.
 `GET /api/history` · `GET /api/project?folder=` · `GET /api/pokedex` · `GET /api/digest?date&download` ·
 `GET /api/config` · `GET /api/meta` · `GET /api/export.{json,csv}` · `GET /api/arena/pantry` ·
 `GET /api/arena/cali/board?window={season,30d,7d,all,lastseason}` · `GET /api/arena/cali/orders` ·
-`POST /api/action` · `POST /api/config` · `POST /api/meta` ·
+`POST /api/action` · `POST /api/config` · `POST /api/meta` · `POST /api/evo-choice` ·
 `POST /api/arena/pantry/{claim,buy,eat,give}` · `POST /api/arena/cali/order`
 (all POSTs CSRF-guarded).
 
@@ -367,6 +368,8 @@ and feature guide.
   sounds, idle sessions and notch approvals.
   Plan cards (approve or keep planning from the notch), a diff view for each edit in the ticker, and
   opt-in **phone alerts** via ntfy (fixed, content-free text only; see `notch/README.md`, Privacy).
+  Branch and Mega picks (Eevee's form, Charizard X / Y) are kept by HQ itself (`evo-choices.json`, local
+  only) and sent as `creature.evo`, so the notch and every browser show the form you picked.
 
 - **2.5.1** — **Strikezone.** A new team shooter in the Arena (Valley, game `strike`), separate from
   Blaster Arena (which is untouched):

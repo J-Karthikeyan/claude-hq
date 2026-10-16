@@ -84,7 +84,8 @@ Claude Code ──hooks──▶ hq_notch_hook.py ──Unix socket──▶ HQ 
   lines are generated from the JS (`tools/gen_pokedata.py`). Like HQ's cards, a species never
   shows an earlier form than the highest stage you've reached with it: the notch reads each
   species' `maxStage` from HQ's `/api/pokedex` (at most once a minute, remembered while HQ is
-  down). Not mirrored: manual branch picks (Eevee etc.), which live only in the browser.
+  down). A branch or Mega you picked in HQ (Eevee's form, Charizard X or Y) comes back from
+  `/api/sessions` as `creature.evo` and wins over the hashed default.
 - **2D or 3D, your pick.** Settings → Sprites: **2D** (animated Gen 5; Apex = the line's final
   form), **3D** (HQ's `pokemon3d` pack, with the Mega form at Apex when the species has one,
   same default X/Y pick as HQ), or **Match HQ** (follows HQ's own `creaturePack`).

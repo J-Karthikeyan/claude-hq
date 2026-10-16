@@ -47,6 +47,7 @@ function setEvoChoice(sid, patch){
   if(!sid) return;
   EVO_CHOICE[sid]=Object.assign({},EVO_CHOICE[sid],patch);
   try{ localStorage.setItem("hq_evo_choice", JSON.stringify(EVO_CHOICE)); }catch(e){}
+  evoChoicePost(sid, patch);                        // so other browsers and the notch see it too
   // A manual re-pick must never fire an evolution splash — drop this session's baseline so
   // checkEvolution re-snapshots next tick instead of seeing a (mega-gaining) form delta.
   if(typeof STAGE_PREV!=="undefined" && STAGE_PREV) delete STAGE_PREV[sid];
@@ -54,6 +55,41 @@ function setEvoChoice(sid, patch){
   if(typeof STATE!=="undefined" && STATE) renderParty(STATE.sessions);
   if(DRAWER_OPEN && DRAWER_SESS){ if(DRAWER_SESS.creature) DRAWER_SESS.creature._sid=sid; renderDrawer(DRAWER_SESS, DRAWER_LAST); }
   if(typeof POKEDEX!=="undefined" && POKEDEX) renderPokedex(POKEDEX);   // dex cards follow the pick too
+}
+// The server keeps every pick too (POST /api/evo-choice -> evo-choices.json, local only) and
+// sends it back as creature.evo, so the notch and other browsers show the same form.
+// Fire-and-forget: localStorage stays the instant cache; a session id the server does not
+// know (a Pokédex preview key) is simply refused there.
+var EVO_UUID=/^[0-9a-fA-F-]{36}$/, EVO_POSTED={};   // sid -> when this browser last picked (ms)
+function evoChoicePost(sid, patch){
+  if(!EVO_UUID.test(String(sid||"")) || typeof fetch!=="function") return;
+  EVO_POSTED[sid]=Date.now();
+  var body={sessionId:sid};
+  patch=patch||{};
+  if("branchDex" in patch) body.branchDex=(patch.branchDex!=null ? (patch.branchDex|0) : null);
+  if("megaSlug" in patch) body.megaSlug=(patch.megaSlug!=null ? String(patch.megaSlug) : null);
+  try{ fetch("/api/evo-choice",{method:"POST",headers:{"Content-Type":"application/json","X-HQ-Token":CSRF},
+    body:JSON.stringify(body)}).catch(function(){}); }catch(e){}
+}
+// Server wins: a pick that came back in /api/sessions (made in another browser) replaces this
+// browser's cached one. Returns true when anything changed (the caller re-renders).
+function evoSeedFromServer(sessions){
+  var changed=false;
+  (sessions||[]).forEach(function(s){
+    var sid=s&&(s.sessionId||s.id), ev=s&&s.creature&&s.creature.evo;
+    if(!sid) return;
+    // a pick only this browser has (made before the server kept them): hand it over, once
+    if(!ev && EVO_CHOICE[sid] && !EVO_POSTED[sid]){ evoChoicePost(sid, EVO_CHOICE[sid]); return; }
+    if(!ev || typeof ev!=="object") return;
+    if(EVO_POSTED[sid] && Date.now()-EVO_POSTED[sid] < 6000) return;   // our own pick is still on its way
+    var cur=EVO_CHOICE[sid]||{}, next={};
+    if(ev.branchDex!=null) next.branchDex=ev.branchDex|0;
+    if(ev.megaSlug!=null) next.megaSlug=String(ev.megaSlug);
+    if(cur.branchDex===next.branchDex && cur.megaSlug===next.megaSlug) return;
+    EVO_CHOICE[sid]=Object.assign({},cur,next); changed=true;
+  });
+  if(changed){ try{ localStorage.setItem("hq_evo_choice", JSON.stringify(EVO_CHOICE)); }catch(e){} PARTY_SIG=null; }
+  return changed;
 }
 // --- New Game+ high-water seeding (drives speciesHighWater/creatureStage flooring) ---
 // Raise DEX_MAX for a species from a RAW stage value only (never the floored creatureStage

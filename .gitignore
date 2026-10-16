@@ -2,6 +2,7 @@
 config.json
 sessions-meta.json
 meals.json
+evo-choices.json
 .dex-seed
 .meals-*.tmp
 # Atomic-write temp files and quarantined corrupt state (may hold tokens)
