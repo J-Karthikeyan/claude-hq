@@ -103,7 +103,9 @@ done = [r for r in runs if r.get("status") == "completed"]
 failed = [r for r in done if r.get("conclusion") not in ("success", "skipped", "neutral")]
 pending = [r["name"] for r in runs if r.get("status") != "completed"]
 if pending and not failed:
-    print("    waiting on: %s" % ", ".join(pending)); sys.exit(3)
+    passed = [r["name"] for r in done]
+    print("    waiting on: %s%s" % (", ".join(pending), " (passed: %s)" % ", ".join(passed) if passed else ""))
+    sys.exit(3)
 for r in runs:
     print("    %-10s %s" % (r["name"], r.get("conclusion") or r.get("status")))
 sys.exit(1 if failed else 0)
@@ -152,6 +154,7 @@ cmd_deploy() {
     while :; do
       rc=0; ci_passed "$sha" || rc=$?
       [[ "$rc" == 3 && "$waited" -lt "$CI_WAIT" ]] || break
+      [[ "$waited" == 0 ]] && echo "    holding for CI, up to ${CI_WAIT}s"
       sleep 20; waited=$((waited + 20))
     done
     case "$rc" in

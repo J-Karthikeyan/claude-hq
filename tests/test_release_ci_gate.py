@@ -74,7 +74,9 @@ echo "$line"
         out = self.deploy(checks(unittest="success", backend="in_progress", rust="in_progress"),
                           checks(unittest="success", backend="success", rust="in_progress"),
                           checks(unittest="success", backend="success", rust="success"))
-        self.assertIn("waiting on: backend, rust", out)
+        self.assertIn("holding for CI, up to 300s", out)
+        self.assertIn("waiting on: backend, rust (passed: unittest)", out)
+        self.assertEqual(out.count("holding for CI"), 1)
         self.assertIn("CI passed", out)
         self.assertIn("Building py", out)
 

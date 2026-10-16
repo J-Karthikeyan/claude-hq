@@ -203,6 +203,63 @@ def _prev_build_crates(all_lines, run_start):
     return best or None
 
 
+# The CI gate's own lines (ops/release.sh). While GitHub is still running the
+# checks, release.sh holds the release and re-checks every 20s rather than
+# failing it, and says so: "holding for CI, up to 300s" once, then one
+# "waiting on: a, b (passed: c)" per check. A finished gate prints one
+# "<name> <conclusion>" line per check, and its die() names why it stopped.
+_CI_SHA = re.compile(r"==> Checking GitHub CI for (\w+)")
+_CI_HOLD = re.compile(r"holding for CI, up to (\d+)s")
+_CI_WAITING = re.compile(r"waiting on: (.+?)(?: \(passed: (.+)\))?$")
+_CI_RESULT = re.compile(r"^ {4}(\S+) +([a-z_]+)$")
+_CI_STOPS = (("CI failed for this commit", "failed"), ("CI has not passed", "failed"),
+             ("CI still running after", "timeout"), ("could not reach GitHub", "unreachable"))
+CI_POLL_SECS = 20
+
+
+def _ci(run):
+    """Where the CI gate has got to, or None if this run has not reached it.
+
+    state is waiting, passed, failed, timeout or unreachable; checks are in the
+    order GitHub listed them, each pending, or its conclusion once completed.
+    """
+    at = next((i for i, ln in enumerate(run) if _CI_SHA.search(ln)), None)
+    if at is None:
+        return None
+    end = next((i for i in range(at + 1, len(run)) if "==> " in run[i]), len(run))
+    gate = run[at + 1:end]
+    checks, budget, polls = {}, None, 0
+    for ln in gate:
+        m = _CI_HOLD.search(ln)
+        if m:
+            budget = int(m[1])
+            continue
+        m = _CI_WAITING.search(ln)
+        if m:
+            polls += 1
+            for name in (m[2] or "").split(", "):
+                if name:
+                    checks[name] = "success"
+            for name in m[1].split(", "):
+                checks[name] = "pending"
+            continue
+        if "no CI runs for this commit yet" in ln:
+            polls += 1
+            continue
+        m = _CI_RESULT.match(ln)
+        if m:
+            checks[m[1]] = "pending" if m[2] in ("in_progress", "queued") else m[2]
+    state = next((st for text, st in _CI_STOPS if any(text in ln for ln in gate)), None)
+    if state is None:
+        state = "passed" if any("CI passed" in ln for ln in gate) else "waiting"
+    return {
+        "sha": _CI_SHA.search(run[at])[1], "state": state, "budget": budget,
+        # A lower bound: the newest "waiting" line was printed this long into the hold.
+        "waited": max(0, polls - 1) * CI_POLL_SECS,
+        "checks": [{"name": n, "status": st} for n, st in checks.items()],
+    }
+
+
 def parse_progress(text):
     """How far the newest deploy has got, read out of the deploy log.
 
@@ -241,8 +298,23 @@ def parse_progress(text):
                  default=0)
         sub = _build_sub(run[at:], _prev_build_crates(lines, start))
 
+    ci = _ci(run)
+    reason = None
+    if state == "fail":
+        # Why it stopped decides what the page says. A release held at the CI
+        # gate never touched the running Arena, so it must not read as a
+        # rollback: "aborted" there sent people looking for damage that was
+        # never done.
+        if ci and ci["state"] in ("failed", "timeout", "unreachable"):
+            reason = "ci_" + ci["state"]
+        elif any("Rolling back" in ln for ln in run):
+            reason = "rolled_back"
+        else:
+            reason = "failed"
+
     return {
         "phase": phase, "idx": idx, "total": len(PHASES),
+        "ci": ci, "reason": reason,
         # Zero until a stage is seen: an unknown deploy reads as indeterminate,
         # never as "0% and climbing".
         "pct": round(100 * idx / len(PHASES)) if idx else 0,
@@ -548,13 +620,147 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>ARENA // DEPLOY CONTROL</t
     tidy end state. */
  .rig.done-fail .fill::after{animation:none;opacity:.85}
 
+
+ /* ------------------------------------------- the CI hold --------------- */
+ /* release.sh holds the release at the CI gate until GitHub finishes, rather
+    than failing it because CI was a minute behind the merge. Holding is
+    neither running nor failing, so it gets the one colour nothing else on the
+    page uses: amber, for "waiting on someone else". It is the longest quiet
+    stretch of a deploy, so it is also the one built to be watched. */
+ :root{--amber:#ffb000}
+ @keyframes spin{to{transform:rotate(360deg)}}
+ @keyframes ping{0%{transform:scale(.7);opacity:.9}100%{transform:scale(3.4);opacity:0}}
+ @keyframes comet{from{left:-35%}to{left:100%}}
+ @keyframes ticker{to{transform:translateX(-50%)}}
+ @keyframes rgbsplit{0%,84%,100%{text-shadow:none;transform:none}
+   86%{text-shadow:-4px 0 var(--red),4px 0 #2ff3ff;transform:translateX(3px) skewX(-8deg)}
+   90%{text-shadow:3px 0 var(--red),-3px 0 #2ff3ff;transform:translateX(-2px)}
+   94%{text-shadow:-1px 0 var(--red),1px 0 #2ff3ff;transform:none}}
+ @keyframes lockon{0%{transform:scale(2.6);opacity:0}60%{transform:scale(.85);opacity:1}100%{transform:scale(1);opacity:1}}
+ @keyframes passwipe{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+ @keyframes breathe{50%{box-shadow:inset 0 0 0 1px rgba(255,176,0,.9),0 0 34px -6px rgba(255,176,0,.6)}}
+ @keyframes clearedin{0%{transform:scale(2);opacity:0;letter-spacing:.4em}
+   55%{transform:scale(.97);opacity:1;letter-spacing:-.02em}100%{transform:scale(1);opacity:1}}
+ @keyframes clearedout{to{transform:scaleY(0);opacity:0}}
+ @keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+
+ .hold{display:none;position:relative;margin-top:10px;padding:16px;gap:18px;
+   grid-template-columns:auto minmax(0,1fr);align-items:center;overflow:hidden;
+   border:1px solid rgba(255,176,0,.5);transform-origin:top;
+   background:radial-gradient(110% 150% at 0 50%,rgba(255,176,0,.09),transparent 62%),#0d0b06;
+   animation:powerup .22s steps(4) 1,breathe 2.4s ease-in-out infinite}
+ .hold.on{display:grid}
+ /* The radar: range rings and a crosshair drawn by gradients, a beam that
+    never stops, one blip per check. The ring around it is the time budget. */
+ .radar{position:relative;width:138px;height:138px;margin:4px;border-radius:50%;
+   background:
+    radial-gradient(circle,transparent 0 32%,rgba(255,176,0,.25) 32% calc(32% + 1px),
+      transparent calc(32% + 1px) 64%,rgba(255,176,0,.25) 64% calc(64% + 1px),transparent calc(64% + 1px)),
+    linear-gradient(transparent calc(50% - .5px),rgba(255,176,0,.2) 0 calc(50% + .5px),transparent 0),
+    linear-gradient(90deg,transparent calc(50% - .5px),rgba(255,176,0,.2) 0 calc(50% + .5px),transparent 0),
+    #070604}
+ .beam{position:absolute;inset:0;border-radius:50%;
+   background:conic-gradient(from 0deg,transparent 0 280deg,rgba(255,176,0,.08) 300deg,rgba(255,176,0,.65) 360deg);
+   animation:spin 2.2s linear infinite}
+ .ring{position:absolute;inset:-7px;width:calc(100% + 14px);height:calc(100% + 14px);
+   transform:rotate(-90deg);overflow:visible}
+ .ring circle{fill:none;stroke-width:3}
+ .ring .rtrack{stroke:rgba(255,176,0,.14);stroke-dasharray:1 2}
+ .ring .rfill{stroke:var(--amber);stroke-dasharray:100;stroke-dashoffset:100;
+   filter:drop-shadow(0 0 4px rgba(255,176,0,.8));transition:stroke-dashoffset .25s linear}
+ .clock{position:absolute;inset:0;display:grid;place-content:center;text-align:center;z-index:1}
+ .clock b{font:900 25px/1 var(--sans);letter-spacing:-.02em;color:#fff;
+   font-variant-numeric:tabular-nums;text-shadow:0 0 12px rgba(255,176,0,.7)}
+ .clock small{margin-top:3px;font-size:8.5px;letter-spacing:.18em;color:rgba(255,176,0,.75)}
+ .blip{position:absolute;width:8px;height:8px;margin:-4px 0 0 -4px;background:var(--amber);
+   box-shadow:0 0 8px var(--amber);z-index:2;transition:left .5s,top .5s}
+ .blip::after{content:"";position:absolute;inset:0;border:1px solid var(--amber);
+   animation:ping 1.6s ease-out infinite;animation-delay:inherit}
+ .blip.pass{background:var(--green);box-shadow:0 0 10px var(--green);animation:lockon .45s steps(5) 1 both}
+ .blip.pass::after{inset:-5px;border-color:var(--green);animation:none}
+ .blip.bad{background:var(--red);box-shadow:0 0 12px var(--red)}
+ .blip.bad::after{border-color:var(--red)}
+
+ .holdtitle{font:900 clamp(1.5rem,5.4vw,2.6rem)/.95 var(--sans);letter-spacing:-.03em;
+   color:var(--amber);animation:rgbsplit 3.1s steps(1) infinite}
+ .holdtitle::after{content:"";display:inline-block;width:1.2em;text-align:left;
+   animation:dots 1.4s steps(1) infinite}
+ .holdsub{margin-top:6px;font-size:10.5px;letter-spacing:.1em;color:#c9b27a;text-transform:none}
+ .holdsub b{color:#fff;font-weight:400;letter-spacing:.06em}
+ .lanes{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:6px}
+ .lane{display:grid;grid-template-columns:minmax(4.5rem,8rem) minmax(0,1fr) 4.8rem;gap:10px;
+   align-items:center;font-size:10.5px;letter-spacing:.14em}
+ .lane .ln{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .lane .lt{position:relative;height:11px;background:#070707;border:1px solid #2b2618;overflow:hidden}
+ .lane .lt::before{content:"";position:absolute;top:0;bottom:0;width:35%;
+   background:linear-gradient(90deg,transparent,rgba(255,176,0,.6) 70%,#fff);
+   box-shadow:0 0 14px var(--amber);animation:comet 1.25s cubic-bezier(.55,0,.45,1) infinite;
+   animation-delay:var(--d,0s)}
+ .lane .lt::after{content:"";position:absolute;inset:0;pointer-events:none;
+   background:repeating-linear-gradient(90deg,transparent 0 6px,#070707 6px 8px)}
+ .lane .ls{text-align:right;color:var(--amber);animation:blink .8s steps(2) infinite}
+ .lane.pass .lt::before{left:0;width:100%;background:var(--green);box-shadow:0 0 12px var(--green);
+   transform-origin:left;animation:passwipe .35s steps(6) 1 both}
+ .lane.pass .ls{color:var(--green);animation:lockon .4s steps(5) 1 both}
+ .lane.bad .lt::before{left:0;width:100%;background:var(--red);box-shadow:0 0 12px var(--red);animation:none}
+ .lane.bad .ls{color:var(--red);animation:none}
+ .noruns{font-size:10.5px;letter-spacing:.12em;color:#c9b27a}
+ .ticker{margin-top:12px;padding-top:8px;border-top:1px dashed rgba(255,176,0,.3);
+   overflow:hidden;white-space:nowrap;font-size:9.5px;letter-spacing:.16em;color:rgba(255,176,0,.6)}
+ .ticker span{display:inline-block;padding-right:0;animation:ticker 22s linear infinite}
+
+ /* While the release holds, the main track is a holding pattern, not progress. */
+ .rig.holding .fill{background:#2a2108}
+ .rig.holding .fill::after{background:repeating-linear-gradient(135deg,rgba(255,176,0,.55) 0 8px,transparent 8px 16px)}
+ .rig.holding .head{background:var(--amber);box-shadow:0 0 12px 3px var(--amber)}
+ .rig.holding .chip.cur{color:var(--amber)}
+ .rig.holding .pct{color:var(--amber)}
+
+ /* CI went green: the radar turns, the lanes are already full, the stamp
+    lands, and the whole module folds away so the build can have the stage. */
+ .hold.cleared{border-color:var(--green);animation:none;
+   box-shadow:inset 0 0 0 1px var(--green),0 0 40px -6px rgba(74,246,38,.6)}
+ .hold.cleared .beam{background:conic-gradient(from 0deg,transparent 0 260deg,rgba(74,246,38,.7) 360deg);
+   animation-duration:.5s}
+ .hold.cleared .ring .rfill{stroke:var(--green);stroke-dashoffset:0!important}
+ .hold.cleared .holdtitle{color:var(--green);animation:clearedin .5s steps(6) 1 both}
+ .hold.cleared .holdtitle::after,.hold.red .holdtitle::after{content:"";animation:none}
+ .hold.cleared::after{content:"";position:absolute;top:0;bottom:0;width:35%;
+   background:linear-gradient(90deg,transparent,rgba(74,246,38,.35),rgba(255,255,255,.5),transparent);
+   animation:comet .6s cubic-bezier(.4,0,.2,1) 1 both}
+ .hold.gone{animation:clearedout .3s steps(4) 1 both}
+ /* CI went red: the hold stays up, frozen, with the failing lane showing. */
+ .hold.red{border-color:var(--red);animation:none;box-shadow:inset 0 0 0 1px var(--red)}
+ .hold.red .beam,.hold.red .ring .rfill{animation:none;opacity:.25}
+ .hold.red .holdtitle{color:var(--red);animation:stampbad .6s steps(7) 1 both}
+ .hold.red .ticker span{animation:none}
+ /* Held, not failed: the wait ran out or GitHub did not answer. Nothing was
+    touched, so no alarm -- an amber stamp, and the bar stops where it was. */
+ .rig.done-held{animation:none}
+ .rig.done-held .fill{background:var(--amber)}
+ .rig.done-held .fill::after{animation:none;opacity:.6}
+ .rig.done-held .pct{color:var(--amber)}
+ .rig.done-held .verdict{display:block;color:var(--amber);animation:stampin .5s steps(6) 1 both}
+ /* The ticker is one long nowrap line: without min-width:0 its column grows
+    to fit it and drags the whole console past a phone's edge. */
+ .hold>div{min-width:0}
+ @media (max-width:34rem){
+   .hold{grid-template-columns:minmax(0,1fr);justify-items:center}
+   .hold>div:last-child{width:100%}
+   .lane{grid-template-columns:minmax(4rem,6rem) minmax(0,1fr) 4.2rem;gap:8px}
+ }
+
  /* Everything above is ornament on a state the text already gives, so this
     turns all of it off and keeps the bar's width, which is the information. */
  @media (prefers-reduced-motion:reduce){
    .act::after,.act.armed::after,.act.primary:hover>span,.rig,.fill::after,
    .head,.chip.cur,.flash,.flash.go::before,.rig.done-ok .verdict,
    .rig.done-fail .verdict,.rig.done-ok .chip,.rig.done-fail,
-   .sub.indet .subfill{animation:none!important}
+   .sub.indet .subfill,.hold,.beam,.blip,.blip::after,.lane .lt::before,.lane .ls,
+   .holdtitle,.holdtitle::after,.ticker span,.hold.cleared::after,
+   .rig.done-held .verdict{animation:none!important}
+   /* A comet that cannot move would sit off the end of its lane. */
+   .lane:not(.pass):not(.bad) .lt::before{left:0;width:100%;opacity:.35}
    /* Still has to read as "no number yet" rather than as 35% done. */
    .sub.indet .subfill{width:100%;opacity:.35}
    /* The verdict still SHOWS -- it is the result, not the celebration. */
@@ -620,6 +826,20 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>ARENA // DEPLOY CONTROL</t
    <div class="subtrack"><div class="subfill" id="subfill"></div></div>
    <div class="subnote" id="subnote"></div>
   </div>
+  <div class="hold" id="hold">
+   <div class="radar" aria-hidden="true"><i class="beam"></i>
+    <svg class="ring" viewBox="0 0 100 100"><circle class="rtrack" cx="50" cy="50" r="48"/>
+     <circle class="rfill" id="rfill" cx="50" cy="50" r="48" pathLength="100"/></svg>
+    <div id="blips"></div>
+    <div class="clock"><b id="clock">0:00</b><small id="clockof">of 5:00</small></div>
+   </div>
+   <div>
+    <div class="holdtitle" id="holdtitle">holding for ci</div>
+    <div class="holdsub" id="holdsub"></div>
+    <ul class="lanes" id="lanes"></ul>
+    <div class="ticker" aria-hidden="true"><span id="ticker"></span></div>
+   </div>
+  </div>
   <div class="read"><output class="pct" id="pct">--</output>
    <span class="nowline" id="nowline">standing by</span></div>
   <div class="verdict" id="verdict"></div>
@@ -650,12 +870,20 @@ function msg(t,cls){var m=$id("msg");m.textContent=t;m.className="msg show "+cls
 // settle, so without this the sweep would restart and the stamp would re-land
 // each time -- which reads as a second deploy starting.
 var ENDED=false;
-function finish(ok,line){
+// Only a rollback is "aborted": a release held at the CI gate never touched
+// the running Arena, and saying otherwise sends people looking for damage.
+var VERDICT={ci_failed:"ci red \u00b7 nothing shipped",
+  ci_timeout:"ci still running \u00b7 nothing shipped",
+  ci_unreachable:"github unreachable \u00b7 nothing shipped",
+  rolled_back:"aborted \u00b7 rolled back", failed:"failed"};
+function finish(ok,reason){
   if(ENDED) return; ENDED=true;
   var rig=$id("rig"), fl=$id("flash");
-  rig.classList.add(ok?"done-ok":"done-fail");
-  $id("verdict").textContent = ok ? "live" : "aborted \u00b7 rolled back";
-  fl.className = "flash " + (ok?"go":"bad");
+  // Held, not failed: nothing went wrong on this box, so no alarm.
+  var held=reason==="ci_timeout"||reason==="ci_unreachable";
+  rig.classList.add(ok?"done-ok":held?"done-held":"done-fail");
+  $id("verdict").textContent = ok ? "live" : (VERDICT[reason]||VERDICT.failed);
+  fl.className = "flash " + (ok?"go":held?"":"bad");
   // Leave the overlay up only as long as its animation: a fixed, full-bleed
   // element outlives its purpose fast.
   setTimeout(function(){fl.className="flash";}, ok?700:1000);
@@ -674,7 +902,7 @@ function paintSub(j){
   var box=$id("sub");
   if(j.idx!==STAGE_IDX){ STAGE_IDX=j.idx; STAGE_AT=Date.now(); }
   var secs=(j.sub&&j.sub.secs!=null)?j.sub.secs:(Date.now()-STAGE_AT)/1000;
-  if(j.state!=="running"||!j.idx||secs<SLOW_AFTER){ box.className="sub"; return; }
+  if(j.state!=="running"||!j.idx||secs<SLOW_AFTER||holding(j)){ box.className="sub"; return; }
   var pct=(j.sub&&j.sub.pct!=null)?j.sub.pct:null;
   box.className="sub on"+(pct==null?" indet":"");
   $id("subname").textContent=(j.phase||"stage")+" \u00b7 in progress";
@@ -683,12 +911,93 @@ function paintSub(j){
   $id("subnote").textContent=(j.sub&&j.sub.note)?j.sub.note:"no step detail from this stage";
 }
 
+// ---- the CI hold ---------------------------------------------------------
+// The hold's clock runs here, between polls, so it ticks every second rather
+// than every poll. It starts from the server's lower bound, so a reload mid-
+// hold picks up roughly where it was instead of back at zero.
+var HOLD={on:false,at:0,budget:300,timer:null}, LANES={};
+function holding(j){ return j.state==="running"&&j.phase==="CI GATE"&&j.ci&&j.ci.state==="waiting"; }
+function mmss(s){ s=Math.max(0,Math.floor(s)); return Math.floor(s/60)+":"+("0"+s%60).slice(-2); }
+function tickHold(){
+  var el=(Date.now()-HOLD.at)/1000, b=HOLD.budget;
+  $id("clock").textContent=mmss(el);
+  $id("clockof").textContent=el<b?"of "+mmss(b):"overtime";
+  $id("rfill").style.strokeDashoffset=Math.max(0,100-100*el/b);
+}
+function lanes(checks){
+  var ul=$id("lanes"), radar=$id("blips");
+  checks.forEach(function(c,i){
+    var L=LANES[c.name];
+    if(!L){
+      var li=document.createElement("li");
+      li.innerHTML='<span class="ln"></span><span class="lt"></span><span class="ls"></span>';
+      li.querySelector(".ln").textContent=c.name;
+      li.style.setProperty("--d",(i*0.31)+"s");
+      var b=document.createElement("i"); b.style.animationDelay=(i*0.4)+"s";
+      ul.appendChild(li); radar.appendChild(b);
+      L=LANES[c.name]={li:li,blip:b,st:null};
+    }
+    var st=c.status==="pending"?"run":/^(success|skipped|neutral)$/.test(c.status)?"pass":"bad";
+    if(L.st===st) return;   // re-setting the class would replay the lock-on
+    L.st=st;
+    L.li.className="lane "+st; L.blip.className="blip "+st;
+    L.li.querySelector(".ls").textContent=st==="run"?"running":st==="pass"?"pass":c.status.replace("_"," ");
+  });
+  // Spread the blips round the scope, alternating range rings.
+  var names=Object.keys(LANES);
+  names.forEach(function(n,i){
+    var a=i/names.length*2*Math.PI-Math.PI/2+0.7, r=i%2?24:38;
+    LANES[n].blip.style.left=(50+r*Math.cos(a))+"%";
+    LANES[n].blip.style.top=(50+r*Math.sin(a))+"%";
+  });
+}
+function paintHold(j){
+  var h=$id("hold"), ci=j.ci;
+  if(holding(j)){
+    if(!HOLD.on){
+      HOLD.on=true; HOLD.at=Date.now()-(ci.waited||0)*1000;
+      clearInterval(HOLD.timer); HOLD.timer=setInterval(tickHold,250);
+      var t="polling github check-runs for "+ci.sha+" every 20s · the release goes the moment every check is green · a red check stops it here, before anything is touched · nothing ships until ci says so · ";
+      $id("ticker").textContent=t+t;
+    }
+    if(ci.budget) HOLD.budget=ci.budget;
+    h.className="hold on";
+    $id("holdtitle").textContent="holding for ci";
+    var waiting=ci.checks.filter(function(c){return c.status==="pending";}).length;
+    $id("holdsub").innerHTML="";
+    $id("holdsub").append(ci.checks.length
+      ? (waiting+" of "+ci.checks.length+" checks still running on ")
+      : "github hasn’t queued the checks for ", (function(){var b=document.createElement("b");b.textContent=ci.sha;return b;})(),
+      ci.checks.length?" · it ships the moment they’re green":" yet · standing by");
+    lanes(ci.checks); tickHold();
+    return;
+  }
+  if(!HOLD.on) return;
+  HOLD.on=false; clearInterval(HOLD.timer);
+  if(ci&&ci.state==="passed"){
+    // Cleared: every lane locks green, the stamp lands, then it folds away.
+    lanes(ci.checks);
+    $id("holdtitle").textContent="ci green · launching";
+    $id("holdsub").textContent="every check passed · handing over to the build";
+    h.className="hold on cleared";
+    setTimeout(function(){h.className="hold on cleared gone";},1700);
+    setTimeout(function(){h.className="hold";},2000);
+  } else if(ci&&ci.state==="failed"){
+    lanes(ci.checks);
+    $id("holdtitle").textContent="ci red";
+    $id("holdsub").textContent="a check failed on github · held at the gate, nothing was touched";
+    h.className="hold on red";
+  } else {
+    h.className="hold";
+  }
+}
+
 function paint(j){
   var rig=$id("rig");
   // Keep whichever ending has already landed: className is rebuilt here.
   var ended=(rig.className.match(/done-\\w+/)||[""])[0];
   rig.className="rig on"+(j.state==="ok"?" ok":j.state==="fail"?" fail":"")
-    +(j.idx?"":" wait")+(ended?" "+ended:"");
+    +(j.idx?"":" wait")+(holding(j)?" holding":"")+(ended?" "+ended:"");
   for(var i=0;i<PHASES.length;i++){
     var ch=rig.querySelectorAll(".chip")[i];
     ch.className="chip"+(i<j.idx?" on":"")+(i===j.idx-1&&j.state==="running"?" cur":"");
@@ -697,7 +1006,9 @@ function paint(j){
   $id("head").style.left=j.pct+"%";
   $id("pct").textContent=j.idx?j.pct+"%":"--";
   $id("nowline").textContent=j.line||"waiting for the release to start";
+  if(holding(j)) $id("pct").textContent="hold";
   paintSub(j);
+  paintHold(j);
 }
 function poll(){
   fetch("/api/progress",{headers:{"X-Panel-Token":CSRF}})
@@ -724,7 +1035,7 @@ function act(path){
       .catch(function(){})
       // The POST's own answer decides, not the poll: a last poll can still read
       // "running" off a log the release has not finished flushing.
-      .then(function(){ finish(j.ok, j.message||j.error||""); });
+      .then(function(){ finish(j.ok, j.reason); });
      msg(j.ok?(j.message||"Done"):(j.error||"Failed"), j.ok?"ok":"err");
      bs.forEach(function(b){b.classList.remove("armed");});
      // Long enough for the ending to play out. A failure holds longer: there
@@ -745,6 +1056,17 @@ $id("rollback").onclick=function(){
 $id("refresh").onclick=function(){location.reload();};
 </script>
 """
+
+
+# What the deploy button reports when a release did not ship, by parse_progress's
+# reason. Only one of them touched the running Arena.
+FAILURES = {
+    "ci_failed": "CI failed on GitHub. Nothing was deployed.",
+    "ci_timeout": "CI was still running when the wait ran out. Nothing was deployed: deploy again once it is green.",
+    "ci_unreachable": "Could not reach GitHub to check CI. Nothing was deployed.",
+    "rolled_back": "Deploy failed and was rolled back to the previous release.",
+    "failed": "Deploy failed.",
+}
 
 
 def render(login, csrf):
@@ -909,9 +1231,12 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/api/deploy":
             rc, out = run(["bash", f"{ARENA_DIR}/ops/autodeploy.sh"], timeout=900)
-            return self._json(200, {"ok": rc == 0,
-                                    "message": "Deployed" if rc == 0 else "Deploy failed — rolled back",
-                                    "error": None if rc == 0 else out[-400:]})
+            if rc == 0:
+                return self._json(200, {"ok": True, "message": "Deployed", "error": None, "reason": None})
+            reason = parse_progress(read_log_tail(DEPLOY_LOG))["reason"] or "failed"
+            why = FAILURES.get(reason, FAILURES["failed"])
+            return self._json(200, {"ok": False, "reason": reason, "message": why,
+                                    "error": why + (" " + out[-400:] if out else "")})
         if path == "/api/rollback":
             # Delegated, like /api/deploy. This used to `git reset --hard HEAD~1`
             # and rebuild with a bare `docker compose`, which had two problems:
