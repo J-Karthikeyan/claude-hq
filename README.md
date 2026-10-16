@@ -365,6 +365,8 @@ and feature guide.
   new session of an evolved species shows its evolved form; the notch opens after a 0.5 s hover.
   A settings view in the notch (gear icon): **2D / 3D / Match HQ** sprites (3D shows Mega forms at Apex),
   sounds, idle sessions and notch approvals.
+  Plan cards (approve or keep planning from the notch), a diff view for each edit in the ticker, and
+  opt-in **phone alerts** via ntfy (fixed, content-free text only; see `notch/README.md`, Privacy).
 
 - **2.5.1** — **Strikezone.** A new team shooter in the Arena (Valley, game `strike`), separate from
   Blaster Arena (which is untouched):

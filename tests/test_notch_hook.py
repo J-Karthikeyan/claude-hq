@@ -60,6 +60,48 @@ class MessageTests(unittest.TestCase):
         self.assertNotIn("toolInput", m)   # only permission cards carry the full input
 
 
+class PlanAndDiffTests(unittest.TestCase):
+    def test_plan_is_sent_nearly_whole(self):
+        plan = "# Plan\n" + "step\n" * 3000                  # ~15 000 chars
+        m = hook.build_message({"hook_event_name": "PermissionRequest", "session_id": "s", "tool_name": "ExitPlanMode",
+                                "tool_input": {"plan": plan}}, [])
+        self.assertEqual(len(m["toolInput"]["plan"]), hook.PLAN_MAX)
+        self.assertTrue(m["toolInput"]["plan"].startswith("# Plan\nstep"))
+        self.assertTrue(m["toolInput"]["plan"].endswith("…"))
+        # other tools keep the normal cap
+        m = hook.build_message({"hook_event_name": "PermissionRequest", "session_id": "s", "tool_name": "Bash",
+                                "tool_input": {"command": "x" * 5000, "plan": "y" * 5000}}, [])
+        self.assertEqual(len(m["toolInput"]["plan"]), hook.STR_MAX)
+
+    def test_edit_diff_payload(self):
+        m = hook.build_message({"hook_event_name": "PostToolUse", "session_id": "s", "tool_name": "Edit",
+                                "tool_input": {"file_path": "/a/b.py", "old_string": "a\nb", "new_string": "a\nc"}}, [])
+        self.assertEqual(m["diff"], {"edits": [{"old": "a\nb", "new": "a\nc"}], "truncated": False})
+        m = hook.build_message({"hook_event_name": "PostToolUse", "session_id": "s", "tool_name": "Write",
+                                "tool_input": {"file_path": "/a/c.md", "content": "hello"}}, [])
+        self.assertEqual(m["diff"]["edits"], [{"old": "", "new": "hello"}])
+        m = hook.build_message({"hook_event_name": "PostToolUse", "session_id": "s", "tool_name": "Read",
+                                "tool_input": {"file_path": "/a/b.py"}}, [])
+        self.assertNotIn("diff", m)
+        # only after the tool ran: a PreToolUse carries no diff
+        m = hook.build_message({"hook_event_name": "PreToolUse", "session_id": "s", "tool_name": "Edit",
+                                "tool_input": {"old_string": "a", "new_string": "b"}}, [])
+        self.assertNotIn("diff", m)
+
+    def test_edit_diff_is_capped(self):
+        d = hook.edit_diff("Edit", {"old_string": "o" * 9000, "new_string": "n"})
+        self.assertEqual(len(d["edits"][0]["old"]), hook.DIFF_MAX)
+        self.assertTrue(d["truncated"])
+        edits = [{"old_string": str(i), "new_string": str(i + 1)} for i in range(20)] + ["junk"]
+        d = hook.edit_diff("MultiEdit", {"edits": edits})
+        self.assertEqual(len(d["edits"]), hook.DIFF_EDITS)
+        self.assertEqual(d["edits"][0], {"old": "0", "new": "1"})
+        self.assertTrue(d["truncated"])
+        self.assertFalse(hook.edit_diff("MultiEdit", {"edits": edits[:3]})["truncated"])
+        self.assertEqual(hook.edit_diff("Edit", None), {"edits": [{"old": "", "new": ""}], "truncated": False})
+        self.assertIsNone(hook.edit_diff("Bash", {"command": "ls"}))
+
+
 class DecisionTests(unittest.TestCase):
     def out(self, reply, payload=None):
         return hook.decision_output(reply, payload or {"tool_name": "Bash"})

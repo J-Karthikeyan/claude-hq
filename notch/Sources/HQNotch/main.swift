@@ -136,7 +136,7 @@ final class NotchController {
     private func set(expanded: Bool) {
         model.expanded = expanded
         enteredAt = nil
-        if !expanded { leftAt = nil; model.showSettings = false; panel.resignKey() }
+        if !expanded { leftAt = nil; model.showSettings = false; model.showDiff = nil; panel.resignKey() }
     }
 }
 

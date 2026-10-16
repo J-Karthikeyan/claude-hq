@@ -79,7 +79,9 @@ struct NotchRoot: View {
     private var expanded: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
-            if model.showSettings {
+            if let d = model.showDiff {
+                DiffView(model: model, item: d.item, folder: d.folder)
+            } else if model.showSettings {
                 SettingsView(model: model)
             } else {
                 // Oldest two requests as cards; the rest wait their turn.
@@ -182,7 +184,9 @@ struct SessionCard: View {
                 if !session.lastPrompt.isEmpty {
                     Text("“\(session.lastPrompt)”").font(.system(size: 11)).foregroundStyle(Theme.faint).lineLimit(1)
                 }
-                ForEach(session.ticker.prefix(3)) { t in TickerRow(item: t) }
+                ForEach(session.ticker.prefix(3)) { t in
+                    TickerRow(item: t, onOpen: t.diff == nil ? nil : { model.openDiff(t, in: session) })
+                }
             }
         }
         .padding(8)
@@ -215,8 +219,11 @@ struct StatusChip: View {
 
 struct TickerRow: View {
     let item: TickerItem
+    /// Set for an edit: a click opens its change in the diff view.
+    var onOpen: (() -> Void)?
+    @State private var hover = false
     var body: some View {
-        HStack(spacing: 5) {
+        let row = HStack(spacing: 5) {
             Text(item.tool).font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                 .foregroundStyle(item.failed ? Theme.danger : Theme.subtle)
             Text(item.target).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Theme.faint)
@@ -227,7 +234,81 @@ struct TickerRow: View {
             if let m = item.minus, m > 0 {
                 Text("−\(m)").font(.system(size: 10.5, weight: .semibold, design: .monospaced)).foregroundStyle(Theme.danger)
             }
+            if onOpen != nil {
+                Image(systemName: "chevron.right").font(.system(size: 8.5, weight: .bold))
+                    .foregroundStyle(hover ? Theme.text : Theme.faint)
+            }
         }
+        if let onOpen {
+            // a click here opens the diff instead of jumping to the terminal (the card's tap)
+            row.contentShape(Rectangle()).onHover { hover = $0 }.onTapGesture(perform: onOpen)
+                .help("Show this change").accessibilityAddTraits(.isButton)
+        } else {
+            row
+        }
+    }
+}
+
+// MARK: diff view
+
+/// What an edit changed: removed lines tinted red, added green, a few unchanged lines around.
+struct DiffView: View {
+    @ObservedObject var model: AppModel
+    let item: TickerItem
+    let folder: String
+
+    var body: some View {
+        let lines = item.diff.map(DiffBuilder.lines) ?? []
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Button { model.showDiff = nil } label: {
+                    Label("Back", systemImage: "chevron.left").font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(LinkStyle()).keyboardShortcut(.escape, modifiers: [])
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.target.isEmpty ? item.tool : item.target)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced)).foregroundStyle(Theme.text).lineLimit(1)
+                    Text("\(item.tool) · \(folder)").font(.system(size: 10.5)).foregroundStyle(Theme.faint).lineLimit(1)
+                }
+                Spacer()
+                if let p = item.plus, p > 0 { Text("+\(p)").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(Theme.ok) }
+                if let m = item.minus, m > 0 { Text("−\(m)").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundStyle(Theme.danger) }
+            }
+            ScrollView(.vertical) {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(lines.enumerated()), id: \.offset) { _, l in DiffRow(line: l) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+            }
+            .frame(height: min(380, max(60, CGFloat(lines.count)*15 + 12)))
+            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.card))
+        }
+    }
+}
+
+struct DiffRow: View {
+    let line: DiffLine
+    var body: some View {
+        switch line {
+        case .context(let s): text(" " + s, Theme.subtle, nil)
+        case .removed(let s): text("−" + s, Theme.text, Theme.danger.opacity(0.22))
+        case .added(let s): text("+" + s, Theme.text, Theme.ok.opacity(0.2))
+        case .gap(let n):
+            Text(n > 0 ? "⋯ \(n) unchanged line\(n == 1 ? "" : "s")" : "⋯")
+                .font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.faint).padding(.vertical, 3).padding(.horizontal, 6)
+        case .more:
+            Text("… more than the notch shows: see the terminal").font(.system(size: 10)).foregroundStyle(Theme.faint)
+                .padding(.vertical, 3).padding(.horizontal, 6)
+        }
+    }
+
+    private func text(_ s: String, _ fg: Color, _ bg: Color?) -> some View {
+        Text(s.isEmpty ? " " : s).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(fg)
+            .lineLimit(1).truncationMode(.tail)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 6).padding(.vertical, 1)
+            .background(bg ?? .clear)
     }
 }
 
@@ -246,12 +327,14 @@ struct RequestCard: View {
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(s?.label ?? "Claude").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text)
-                    Text(request.isQuestion ? "Has a question" : "Wants to run \(request.tool)")
+                    Text(request.isPlan ? "Has a plan for you" : request.isQuestion ? "Has a question" : "Wants to run \(request.tool)")
                         .font(.system(size: 11)).foregroundStyle(Theme.alert)
                 }
                 Spacer()
             }
-            if request.isQuestion {
+            if request.isPlan {
+                PlanBody(model: model, request: request)
+            } else if request.isQuestion {
                 QuestionForm(model: model, request: request)
             } else {
                 Text(RequestDetail.text(request)).font(.system(size: 11, design: .monospaced))
@@ -275,6 +358,45 @@ struct RequestCard: View {
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.alert.opacity(0.7), lineWidth: 1))
+    }
+}
+
+/// A plan waiting for approval (ExitPlanMode): read it, then approve it, send it back, or answer
+/// in the terminal.
+struct PlanBody: View {
+    @ObservedObject var model: AppModel
+    let request: PendingRequest
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ScrollView(.vertical) {
+                Text(PlanText.render(request.plan ?? ""))
+                    .font(.system(size: 11.5)).foregroundStyle(Theme.text)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .textSelection(.enabled)
+            }
+            .frame(maxHeight: 220)
+            .fixedSize(horizontal: false, vertical: (request.plan ?? "").count < 400)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.card))
+            HStack(spacing: 8) {
+                Button("Terminal") { model.passToTerminal(request) }.buttonStyle(LinkStyle())
+                Spacer()
+                Button("Keep planning") { model.keepPlanning(request) }.buttonStyle(PillStyle(fill: Theme.working))
+                    .keyboardShortcut(.escape, modifiers: [])
+                Button("Approve") { model.allow(request) }.buttonStyle(PillStyle(fill: Theme.ok))
+                    .keyboardShortcut(.return, modifiers: [])
+            }
+        }
+    }
+}
+
+/// A plan's markdown as text: inline styles (bold, code, links) rendered, line breaks kept; plain
+/// text if it does not parse. Headings and bullets stay as written, which reads fine.
+enum PlanText {
+    static func render(_ md: String) -> AttributedString {
+        let opts = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        return (try? AttributedString(markdown: md, options: opts)) ?? AttributedString(md)
     }
 }
 
@@ -397,6 +519,57 @@ struct LinkStyle: ButtonStyle {
 
 // MARK: settings
 
+/// Phone alerts: a content-free push to an ntfy topic when a session needs you, finishes or
+/// fails. Off until you turn it on.
+struct PhoneSettings: View {
+    @ObservedObject var model: AppModel
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SettingToggle(title: "Phone alerts",
+                          detail: "A short push (\u{201C}A Claude session needs you\u{201D}, \u{201C}…finished\u{201D}) through ntfy. Never your prompts, files or session names.",
+                          isOn: $model.phoneOn)
+            if model.phoneOn {
+                HStack(spacing: 6) {
+                    Text("Server").font(.system(size: 10.5)).foregroundStyle(Theme.faint).frame(width: 46, alignment: .leading)
+                    TextField("https://ntfy.sh", text: $model.phoneServer)
+                        .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced))
+                        .disableAutocorrection(true)
+                }
+                HStack(spacing: 6) {
+                    Text("Topic").font(.system(size: 10.5)).foregroundStyle(Theme.faint).frame(width: 46, alignment: .leading)
+                    Text(model.phoneTopic).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.text)
+                        .textSelection(.enabled)
+                    Spacer(minLength: 4)
+                    Button(copied ? "Copied" : "Copy") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(model.phoneTopic, forType: .string)
+                        copied = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                    }.buttonStyle(LinkStyle())
+                    Button("New") { model.newPhoneTopic() }.buttonStyle(LinkStyle())
+                        .help("Make a new random topic: anyone following the old one stops getting your alerts")
+                }
+                Text("Install the ntfy app on your phone and subscribe to this topic. Anyone who knows the topic can read the alerts, so keep it to yourself.")
+                    .font(.system(size: 10.5)).foregroundStyle(Theme.faint).fixedSize(horizontal: false, vertical: true)
+                if PhoneTopic.url(server: model.phoneServer, topic: model.phoneTopic) == nil {
+                    Text("The server must be an http(s) address, like https://ntfy.sh.").font(.system(size: 10.5)).foregroundStyle(Theme.danger)
+                }
+                SettingToggle(title: "Only when I'm away from the Mac",
+                              detail: "Skip the push if you used the keyboard or mouse in the last 2 minutes.",
+                              isOn: $model.phoneAwayOnly)
+                HStack(spacing: 8) {
+                    Button("Send a test") { model.sendTestPush() }.buttonStyle(PillStyle(fill: Theme.working))
+                    if let st = model.phoneStatus {
+                        Text(st).font(.system(size: 10.5)).foregroundStyle(Theme.subtle).lineLimit(2)
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// The notch's own settings (the gear in the header). Every choice is saved at once.
 struct SettingsView: View {
     @ObservedObject var model: AppModel
@@ -419,6 +592,8 @@ struct SettingsView: View {
             SettingToggle(title: "Approve from the notch",
                           detail: "Off: every permission prompt and question goes straight to the terminal.",
                           isOn: $model.approvals)
+            Divider().overlay(Theme.card)
+            PhoneSettings(model: model)
             Divider().overlay(Theme.card)
             HStack {
                 Circle().fill(model.hqReachable ? Theme.ok : Theme.faint).frame(width: 6, height: 6)
