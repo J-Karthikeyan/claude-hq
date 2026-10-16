@@ -1,0 +1,41 @@
+[package]
+name = "claudehq"
+version = "2.5.0"
+edition = "2021"
+description = "Claude HQ local server (Rust port of dashboard.py and the modules it imports)"
+
+[[bin]]
+name = "claudehq"
+path = "src/main.rs"
+
+[lib]
+name = "claudehq"
+path = "src/lib.rs"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+# preserve_order: serde_json::Map iterates in insertion order, like a Python
+# dict, so every payload keeps the key order dashboard.py produces.
+serde_json = { version = "1", features = ["preserve_order"] }
+indexmap = "2"
+regex = "1"
+chrono = "0.4"
+sha2 = "0.10"
+sha1 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+rand = "0.8"
+libc = "0.2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+ureq = "2"
+unicode-general-category = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
+needless_range_loop = "allow"
