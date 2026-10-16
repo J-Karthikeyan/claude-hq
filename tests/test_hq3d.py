@@ -190,16 +190,24 @@ console.log('END', globalThis.__END__);
 CITY = r"""
 const fs = require('fs');
 const window = {HQV: {}};
-new Function('window', fs.readFileSync(process.argv[1], 'utf8'))(window);
+for (const f of process.argv.slice(1)) new Function('window', fs.readFileSync(f, 'utf8'))(window);
 const lay = window.HQV.hqCityLayout, nm = window.HQV.hqCityName;
 const list = [{userId: 'c'}, {userId: 'a', isYou: true}, {userId: 'b'}, null, {userId: 7}];
 const L1 = lay(list), L2 = lay(list.slice().reverse());
 const many = lay(Array.from({length: 60}, (_, i) => ({userId: 'u' + String(i).padStart(2, '0'), isYou: i === 59})));
-const lot = L1.lots[0], dx = lot.door.x - lot.x, dz = lot.door.z - lot.z;
+const blocks = L => [L.plaza].concat(L.lots.map(l => l.block), L.views.map(l => l.block)).map(b => b.x + ',' + b.z);
+const lot = L1.lots[0];
+const ring = window.HQV.hqBaseViewRing();
+let minGap = 1e9;
+ring.forEach((a, i) => ring.forEach((b, j) => { if (i < j) minGap = Math.min(minGap, Math.hypot(a.x - b.x, a.z - b.z)); }));
 console.log(JSON.stringify({
-  order: L1.lots.map(l => l.h.userId), same: JSON.stringify(L1) === JSON.stringify(L2), R: L1.R,
-  manyN: many.lots.length, manyYou: many.lots.some(l => l.h.isYou), manyR: Math.round(many.R),
-  doorFacesMiddle: Math.hypot(lot.door.x, lot.door.z) < Math.hypot(lot.x, lot.z) && Math.abs(Math.atan2(dx, dz) - lot.rot) < 1e-9,
+  order: L1.lots.map(l => l.h.userId), same: JSON.stringify(L1) === JSON.stringify(L2), grid: [L1.cols, L1.rows],
+  views: L1.views.map(l => l.v.view), uniqueBlocks: new Set(blocks(L1)).size === blocks(L1).length && new Set(blocks(many)).size === blocks(many).length,
+  manyN: many.lots.length, manyYou: many.lots.some(l => l.h.isYou), manyGrid: [many.cols, many.rows],
+  nearPlaza: Math.hypot(L1.lots[0].block.x - L1.plaza.x, L1.lots[0].block.z - L1.plaza.z) <= Math.hypot(L1.views[12].block.x - L1.plaza.x, L1.views[12].block.z - L1.plaza.z),
+  doorFacesRoad: lot.door.x === lot.x && lot.door.z > lot.z && lot.rot === 0 && L1.views.every(l => l.door.z > l.z),
+  ring: ring.length, ringMinGap: Math.round(minGap), ringInside: ring.every(r => Math.hypot(r.x, r.z) + 5 < 46),
+  ringClear: ring.every(r => !(r.x > 22 && Math.abs(r.z) < 12) && !(r.x < -21 && Math.abs(r.z) < 14) && !(r.z < -22 && Math.abs(r.x) < 14) && !(Math.abs(r.x) < 5 && r.z > 15)),
   names: [nm({look: {sign: '  Owl Works '}, trainerName: 'Ann'}), nm({displayName: 'Bob', look: {}}), nm({})]
 }));
 """
@@ -207,19 +215,28 @@ console.log(JSON.stringify({
 
 @unittest.skipUnless(shutil.which("node"), "node not installed")
 class ArenaCity(unittest.TestCase):
-    """HQ 2.1 Arena City: every open HQ on one street, the same layout for everyone."""
+    """Arena City: every open HQ and every tab's building on a grid of blocks, the same layout for everyone."""
 
     def test_layout(self):
-        r = subprocess.run(["node", "-e", CITY, os.path.join(ROOT, "games", "hqcity.js")], capture_output=True, text=True, timeout=30)
+        r = subprocess.run(["node", "-e", CITY, os.path.join(ROOT, "games", "hqbase.js"), os.path.join(ROOT, "games", "hqcity.js")],
+                           capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         got = json.loads(r.stdout)
         self.assertEqual(got["order"], ["a", "b", "c"])          # by user id, whoever asks
         self.assertTrue(got["same"])
-        self.assertEqual(got["R"], 30)                            # a small street keeps a usable plaza
+        self.assertEqual(got["grid"], [5, 4])                     # 3 HQs + 13 tabs + the plaza = 17 blocks
+        self.assertEqual(got["views"], ["live", "analytics", "pokedex", "gym", "quests", "village", "arena",
+                                        "store", "cali", "valley", "music", "workshop", "compete"])
+        self.assertTrue(got["uniqueBlocks"])                      # one building per block
+        self.assertTrue(got["nearPlaza"])                         # HQs nearest the plaza, the tabs round them
         self.assertEqual(got["manyN"], 12)                        # capped, and you are always on it
         self.assertTrue(got["manyYou"])
-        self.assertEqual(got["manyR"], 69)
-        self.assertTrue(got["doorFacesMiddle"])
+        self.assertEqual(got["manyGrid"], [6, 5])
+        self.assertTrue(got["doorFacesRoad"])
+        self.assertEqual(got["ring"], 13)                         # every tab has a building round your Base
+        self.assertGreaterEqual(got["ringMinGap"], 11)            # wider than a building (9 m), so none overlap
+        self.assertTrue(got["ringInside"])
+        self.assertTrue(got["ringClear"])                         # off the parking, kart track, annex and front path
         self.assertEqual(got["names"], ["Owl Works", "Bob's HQ", "Someone's HQ"])
 
     def test_page_wiring(self):
@@ -236,5 +253,7 @@ class ArenaCity(unittest.TestCase):
         self.assertIn('d.view.indexOf("visit:") === 0', src)
         self.assertIn('return ride ? 3 : keyMove', src)                 # a rider reports a = 3
         city = open(os.path.join(ROOT, "games", "hqcity.js"), encoding="utf-8").read()
-        self.assertIn('bikes = bikePark(8.6);', city)                    # the bike park beside the fountain
+        self.assertIn('bikes = bikePark(P.x + 8.6, P.z);', city)         # the bike park beside the fountain
+        self.assertIn('city.views.forEach(viewBuilding);', city)         # every tab has a building on the street
+        self.assertIn('viewTitle: function(v){', html)                   # named as the page names its tabs
         self.assertIn('var calm = c.E.calm(), tt = calm ? 0 : t;', city)  # still water in Calm

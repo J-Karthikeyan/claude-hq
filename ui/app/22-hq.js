@@ -32,6 +32,8 @@ function hqApi(){
     character: function(){ return typeof charSpec==="function" ? charSpec() : null; },
     openSession: hqOpen,
     go: function(v){ hqModeSave("classic"); setView(v); },
+    // a tab's [name, subtitle], for its building in the city and round your Base
+    viewTitle: function(v){ return (typeof VIEW_TITLES!=="undefined" && VIEW_TITLES[v]) || null; },
     onFilter: function(p){ HQ3D.filter = p || null; hqRenderCrew(); },
     // your HQ level: the Arena's (sessions + games) when paired, else the season level the page shows
     level: function(){ var a=(typeof progLevel==="function") && progLevel(); if(a) return a; var s=(STATE && STATE.season) || {}; return Math.max(1, (s.level|0) || 1); },
