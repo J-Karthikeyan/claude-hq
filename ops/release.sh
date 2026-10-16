@@ -18,6 +18,7 @@
 #   ARENA_IMPL=py|rs        which Arena to run (default: whatever runs now, else py)
 #   ARENA_BRANCH=main       branch to release
 #   ARENA_SKIP_CI=1         deploy even if GitHub CI has not passed for the commit
+#   ARENA_CI_WAIT=300       seconds to wait for CI that is still running
 #   ARENA_SKIP_PULL=1       release the checkout as it is (used by the CI smoke test)
 #   ARENA_KEEP=3            releases to keep per implementation
 #
@@ -32,6 +33,7 @@ STATE="$BACKEND/.release.env"         # what compose should run now (git-ignored
 HISTORY="$BACKEND/.releases"          # one line per release, newest last (git-ignored)
 BRANCH="${ARENA_BRANCH:-main}"
 KEEP="${ARENA_KEEP:-3}"
+CI_WAIT="${ARENA_CI_WAIT:-300}"
 GH_REPO="${ARENA_GH_REPO:-RoString36222/claude-hq}"
 
 say()  { printf '\033[1;34m==>\033[0m %s\n' "$1"; }
@@ -88,7 +90,7 @@ wait_healthy() {  # expected version (optional)
   return 1
 }
 
-ci_passed() {  # sha -> 0 when every GitHub check run for it finished successfully
+ci_passed() {  # sha -> 0 passed, 1 failed, 2 GitHub unreachable, 3 still running
   local sha="$1" body
   body=$(curl -fsS --max-time 20 -H "Accept: application/vnd.github+json" \
     "https://api.github.com/repos/$GH_REPO/commits/$sha/check-runs?per_page=100") || return 2
@@ -96,11 +98,15 @@ ci_passed() {  # sha -> 0 when every GitHub check run for it finished successful
 import json, sys
 runs = json.loads(sys.argv[1]).get("check_runs", [])
 if not runs:
-    print("    no CI runs for this commit yet"); sys.exit(1)
-bad = [r["name"] for r in runs if r.get("status") != "completed" or r.get("conclusion") not in ("success", "skipped", "neutral")]
+    print("    no CI runs for this commit yet, waiting"); sys.exit(3)
+done = [r for r in runs if r.get("status") == "completed"]
+failed = [r for r in done if r.get("conclusion") not in ("success", "skipped", "neutral")]
+pending = [r["name"] for r in runs if r.get("status") != "completed"]
+if pending and not failed:
+    print("    waiting on: %s" % ", ".join(pending)); sys.exit(3)
 for r in runs:
     print("    %-10s %s" % (r["name"], r.get("conclusion") or r.get("status")))
-sys.exit(1 if bad else 0)
+sys.exit(1 if failed else 0)
 PY
 }
 
@@ -140,8 +146,20 @@ cmd_deploy() {
 
   if [[ "${ARENA_SKIP_CI:-}" != 1 ]]; then
     say "Checking GitHub CI for ${sha:0:7}"
-    ci_passed "$sha" || die "CI has not passed for this commit (ARENA_SKIP_CI=1 to override)"
-    ok "CI passed"
+    # A deploy right after a merge lands while CI is still running: wait for it
+    # rather than fail (autodeploy would otherwise not retry for 5 minutes).
+    local waited=0 rc
+    while :; do
+      rc=0; ci_passed "$sha" || rc=$?
+      [[ "$rc" == 3 && "$waited" -lt "$CI_WAIT" ]] || break
+      sleep 20; waited=$((waited + 20))
+    done
+    case "$rc" in
+      0) ok "CI passed" ;;
+      3) die "CI still running after ${CI_WAIT}s (ARENA_SKIP_CI=1 to override)" ;;
+      2) die "could not reach GitHub to check CI (ARENA_SKIP_CI=1 to override)" ;;
+      *) die "CI failed for this commit (ARENA_SKIP_CI=1 to override)" ;;
+    esac
   fi
 
   local version; version="$(date -u +%Y.%m.%d)-${sha:0:7}"
