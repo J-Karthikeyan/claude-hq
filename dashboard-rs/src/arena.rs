@@ -488,12 +488,43 @@ impl App {
             "at": py::iso(&py::now_utc()), "ok": status == 200, "error": err,
             "accepted": if status == 200 { b.get("accepted").cloned().unwrap_or(json!(0)) } else { json!(0) },
         });
+        if status == 200 {
+            // Sent every publish, "" when the setting is off, so switching it off
+            // unlinks this device on the next publish. Best effort: an Arena
+            // without the route answers 404 and the publish still counts.
+            let _ = self.arena_request("POST", &format!("{}/v1/me/account", base), Some(&token), Some(&json!({"key": self.account_key_if_enabled()})));
+        }
         (status, body)
     }
 
-    /// The exact payload publish() would send, without sending it.
+    /// The account-board key: sha256 over a fixed prefix and the local Claude
+    /// `oauthAccount.accountUuid`, or "" if there is none. Nothing else in
+    /// `.claude.json` is read, and the file is never written or quarantined:
+    /// it belongs to Claude Code.
+    pub fn account_key(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let uuid = state::load_json_plain(&self.paths.claude_json)
+            .and_then(|v| v.get("oauthAccount")?.get("accountUuid")?.as_str().map(str::to_lowercase))
+            .filter(|u| crate::app::is_uuid(u));
+        match uuid {
+            Some(u) => hex::encode(Sha256::digest(format!("claude-hq:account:v1:{}", u).as_bytes())),
+            None => String::new(),
+        }
+    }
+
+    fn account_key_if_enabled(&self) -> String {
+        if py::opt_truthy(self.load_config().get("arenaAccountBoard")) { self.account_key() } else { String::new() }
+    }
+
+    /// The exact payload publish() would send, without sending it, plus the
+    /// account key when that is on (it goes in its own request).
     pub fn arena_preview(&self) -> (u16, Value) {
-        (200, self.payload_from_config())
+        let mut p = self.payload_from_config();
+        let key = self.account_key_if_enabled();
+        if let (false, Some(o)) = (key.is_empty(), p.as_object_mut()) {
+            o.insert("accountKey".into(), json!(key));
+        }
+        (200, p)
     }
 
     /// Connection state for the UI. Deliberately excludes the token.
@@ -514,6 +545,7 @@ impl App {
             "avatarUrl": link.get("avatarUrl").cloned().unwrap_or_else(|| json!("")),
             "enabled": py::opt_truthy(cfg.get("arenaEnabled")),
             "shareCost": py::opt_truthy(cfg.get("arenaShareCost")),
+            "accountBoard": py::opt_truthy(cfg.get("arenaAccountBoard")),
             "lastPublish": self.arena.last.lock().unwrap().clone(),
         })
     }
@@ -857,6 +889,15 @@ impl App {
         }
     }
 
+    /// The account board, or the groups you are in. Read-only.
+    pub fn arena_accounts(&self, action: &str) -> (u16, Value) {
+        match action {
+            "board" => self.authed_get("/v1/accounts"),
+            "mine" => self.authed_get("/v1/accounts/mine"),
+            _ => (400, json!({"error": "unknown accounts action"})),
+        }
+    }
+
     pub fn arena_quickplay(&self, action: &str, body: &Value) -> (u16, Value) {
         if self.authed().is_none() {
             return not_paired();
@@ -1123,5 +1164,96 @@ pub(crate) mod tests {
         let (code, resp) = app2.arena_pair("abcd", None);
         assert_eq!(code, 500);
         assert!(resp["error"].as_str().unwrap().contains("could not save"));
+    }
+
+    const ACCT: &str = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
+
+    fn write_claude_json(app: &App) {
+        let p = &app.paths.claude_json;
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, crate::pyjson::dumps(&json!({"oauthAccount": {
+            "accountUuid": ACCT.to_uppercase(), "emailAddress": "ann@acme.example",
+            "organizationUuid": "99999999-8888-7777-6666-555555555555", "organizationName": "Acme Corp",
+            "displayName": "Ann", "fullName": "Ann Example"}}))).unwrap();
+    }
+
+    /// Like `stub`, but `/v1/me/account` answers `acct` and everything else 200.
+    fn stub_split(app: &App, acct: (u16, Value)) -> Sent {
+        app.save_link(&json!({"token": "T", "url": "https://arena.example", "handle": "ann"})).unwrap();
+        let sent: Sent = Arc::new(Mutex::new(Vec::new()));
+        let s2 = sent.clone();
+        *app.arena.transport.write().unwrap() = Some(Arc::new(move |m, u, t, b| {
+            s2.lock().unwrap().push((m.to_string(), u.to_string(), t.map(String::from), b.cloned()));
+            if u.ends_with("/v1/me/account") { acct.clone() } else { (200, json!({"accepted": 1})) }
+        }));
+        sent
+    }
+
+    #[test]
+    fn account_key_is_a_hash_of_the_account_uuid_only() {
+        let (_d, app) = app();
+        assert_eq!(app.account_key(), "");
+        write_claude_json(&app);
+        let k = app.account_key();
+        use sha2::{Digest, Sha256};
+        assert_eq!(k, hex::encode(Sha256::digest(format!("claude-hq:account:v1:{}", ACCT).as_bytes())));
+        assert_eq!(k, app.account_key());
+        std::fs::write(&app.paths.claude_json, r#"{"oauthAccount": {"accountUuid": "not-a-uuid"}}"#).unwrap();
+        assert_eq!(app.account_key(), "");
+        std::fs::write(&app.paths.claude_json, "{corrupt").unwrap();
+        assert_eq!(app.account_key(), "");
+        // Claude Code's file is never renamed or rewritten.
+        assert_eq!(std::fs::read_to_string(&app.paths.claude_json).unwrap(), "{corrupt");
+    }
+
+    #[test]
+    fn publish_sends_only_the_account_hash_and_only_when_opted_in() {
+        let (_d, app) = app();
+        write_claude_json(&app);
+        let sent = stub_split(&app, (200, json!({"ok": true})));
+        app.arena_publish();
+        {
+            let s = sent.lock().unwrap();
+            assert_eq!(s.len(), 2);
+            assert_eq!(s[1].1, "https://arena.example/v1/me/account");
+            assert_eq!(s[1].3, Some(json!({"key": ""})));
+        }
+        assert!(app.arena_preview().1.get("accountKey").is_none());
+
+        app.save_config(&json!({"arenaAccountBoard": true})).unwrap();
+        sent.lock().unwrap().clear();
+        app.arena_publish();
+        let s = sent.lock().unwrap();
+        assert_eq!(s[1].3, Some(json!({"key": app.account_key()})));
+        let mut blob = String::new();
+        for (_, _, _, b) in s.iter() {
+            blob.push_str(&crate::pyjson::dumps(b.as_ref().unwrap_or(&Value::Null)));
+        }
+        blob.push_str(&crate::pyjson::dumps(&app.arena_preview().1));
+        for secret in [ACCT, &ACCT.to_uppercase(), "ann@acme.example", "Acme Corp", "99999999-8888", "Ann Example"] {
+            assert!(!blob.contains(secret), "{secret} left the machine");
+        }
+        assert_eq!(app.arena_preview().1["accountKey"], json!(app.account_key()));
+        assert_eq!(app.arena_status()["accountBoard"], json!(true));
+    }
+
+    #[test]
+    fn an_arena_without_the_account_route_still_publishes() {
+        let (_d, app) = app();
+        let _sent = stub_split(&app, (404, json!({"detail": "Not Found"})));
+        assert_eq!(app.arena_publish().0, 200);
+        assert_eq!(app.arena.last.lock().unwrap()["ok"], json!(true));
+    }
+
+    #[test]
+    fn the_account_board_proxies_two_reads_only() {
+        let (_d, app) = app();
+        let sent = stub(&app, "https://arena.example", Arc::new(Mutex::new((200, json!({"accounts": []})))));
+        assert_eq!(app.arena_accounts("board").0, 200);
+        assert_eq!(app.arena_accounts("mine").0, 200);
+        assert_eq!(app.arena_accounts("drop").0, 400);
+        let s = sent.lock().unwrap();
+        let got: Vec<(&str, &str)> = s.iter().map(|r| (r.0.as_str(), r.1.as_str())).collect();
+        assert_eq!(got, [("GET", "https://arena.example/v1/accounts"), ("GET", "https://arena.example/v1/accounts/mine")]);
     }
 }

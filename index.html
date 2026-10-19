@@ -1179,6 +1179,11 @@
           <span class="hint" id="setWorkSignalsHint">While paired, this Mac sorts your sessions into seven kinds of work (testing, refactoring, docs, review, debugging, exploring, building) and sends one number per kind per day. Never commands, files, paths, projects or text.</span>
         </div>
         <div class="setrow">
+          <label id="setAccountBoardLbl">Account board</label>
+          <label class="dex-toggle"><input type="checkbox" id="setAccountBoard" aria-describedby="setAccountBoardHint"> Group me with other people using the same Claude account</label>
+          <span class="hint" id="setAccountBoardHint">While paired, sends only a one-way hash of your Claude account id, so people signed into the same account share a spot on the account board. Never your email, organisation, name or the id itself.</span>
+        </div>
+        <div class="setrow">
           <label for="setPack">Creature pack</label>
           <select id="setPack">
             <option value="pokemon">Pokémon (animated sprites)</option>

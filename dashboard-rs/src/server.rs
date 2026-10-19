@@ -468,6 +468,10 @@ fn do_get(app: &App, path: &str, query: &str, headers: &HeaderMap) -> Reply {
             let (c, r) = app.arena_quickplay("status", &json!({}));
             return Reply::json(c, &r);
         }
+        "/api/arena/accounts" | "/api/arena/accounts/mine" => {
+            let (c, r) = app.arena_accounts(if path.ends_with("/mine") { "mine" } else { "board" });
+            return Reply::json(c, &r);
+        }
         "/api/arena/crews" | "/api/arena/crews/mine" => {
             let (c, r) = app.arena_crews(if path.ends_with("/mine") { "mine" } else { "board" }, &json!({}));
             return Reply::json(c, &r);

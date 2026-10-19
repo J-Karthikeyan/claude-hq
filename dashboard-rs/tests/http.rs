@@ -230,7 +230,7 @@ fn stream_sends_a_data_frame() {
     }
     let text = String::from_utf8_lossy(&buf);
     assert!(text.to_lowercase().contains("content-type: text/event-stream; charset=utf-8"));
-    assert!(text.contains("\"version\": \"2.6.2\""));
+    assert!(text.contains(&format!("\"version\": \"{}\"", claudehq::app::APP_VERSION)));
 }
 
 /// A session id whose Pokemon is this species (test_evo_choice.py's sid_for).

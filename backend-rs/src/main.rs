@@ -3,6 +3,7 @@
 //! Serves the same endpoints against the same SQLite file, so it can be run
 //! alongside the Python one and swapped by changing which port Caddy proxies.
 
+mod accounts;
 mod auth;
 mod boardstream;
 mod boss;
@@ -878,6 +879,7 @@ async fn serve() -> anyhow::Result<()> {
         .merge(boss::routes())
         .merge(cali::routes())
         .merge(cosmetics::routes())
+        .merge(accounts::routes())
         .merge(crews::routes())
         .merge(cups::routes())
         .merge(hq::routes())
