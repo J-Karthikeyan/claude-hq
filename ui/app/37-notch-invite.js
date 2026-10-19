@@ -122,10 +122,15 @@ function notchInviteInstall(){
 }
 // Reopen by hand (Settings > HQ Notch, command palette), whatever was chosen before.
 function openNotchInvite(){
-  notchStatus().then(function(s){
-    if(!s){ if(typeof toast === "function") toast("HQ did not answer."); return; }
-    if(!s.mac){ if(typeof toast === "function") toast("HQ Notch is for Macs only."); return; }
-    if(!s.available){ if(typeof toast === "function") toast("This HQ has no notch/ folder: update HQ first."); return; }
+  fetch("/api/notch/status").then(function(r){
+    if(r.status === 404) return {stale: true};                 // files updated (git pull) but this server started before 2.6.0
+    return r.ok ? r.json() : null;
+  }).catch(function(){ return null; }).then(function(s){
+    var say = function(m){ if(typeof toast === "function") toast(m); };
+    if(s && s.stale){ say("Restart HQ to finish the update: this HQ server started before HQ Notch was added."); return; }
+    if(!s){ say("HQ did not answer."); return; }
+    if(!s.mac){ say("HQ Notch is for Macs only."); return; }
+    if(!s.available){ say("This HQ has no notch/ folder: update HQ first."); return; }
     notchInviteOpen(s, true);
   });
 }
