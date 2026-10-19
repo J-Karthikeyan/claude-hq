@@ -168,7 +168,11 @@ var ENGINES = {
   diesel: {lo: 22, hi: 90,  a: "square",   b: "sawtooth", ratio: 0.5, cut: 520,  q: 2, gain: 0.055, rattle: 0.035},
   turbo:  {lo: 30, hi: 140, a: "sawtooth", b: "triangle", ratio: 2.0, cut: 1100, q: 6, gain: 0.05,  whistle: 1800},
   hotrod: {lo: 24, hi: 130, a: "sawtooth", b: "sawtooth", ratio: 1.01, cut: 850, q: 8, gain: 0.06,  lope: [4.5, 0.5]},
-  bike:   {lo: 55, hi: 260, a: "sawtooth", b: "square",   ratio: 2.0, cut: 2400, q: 3, gain: 0.04,  lope: [22, 0.15]}
+  bike:   {lo: 55, hi: 260, a: "sawtooth", b: "square",   ratio: 2.0, cut: 2400, q: 3, gain: 0.04,  lope: [22, 0.15]},
+  // Valley Rally: a turbo four with its whistle, a straight six, a high-revving four
+  turbo4: {lo: 34, hi: 158, a: "sawtooth", b: "triangle", ratio: 2.0, cut: 1250, q: 5, gain: 0.05,  whistle: 2300, lope: [11, 0.08]},
+  six:    {lo: 30, hi: 140, a: "sawtooth", b: "sawtooth", ratio: 1.5, cut: 1050, q: 6, gain: 0.055},
+  four:   {lo: 38, hi: 176, a: "square",   b: "sawtooth", ratio: 2.0, cut: 1600, q: 4, gain: 0.045, lope: [16, 0.1]}
 };
 function engineSound(kind){
   var P = ENGINES[kind] || ENGINES.v8;
@@ -209,6 +213,24 @@ function engineSound(kind){
     }
   };
 }
+// A looping band of noise (tyre scrub, gravel under the car): noiseLoop(freq, q) ->
+// {set(gain, freq), stop()}. Silent until set() is called with a gain.
+function noiseLoop(freq, q){
+  var a = sfxVolume() > 0 ? audio() : null; if(!a) return {set: function(){}, stop: function(){}};
+  var n = Math.floor(a.sampleRate*0.6), b = a.createBuffer(1, n, a.sampleRate), d = b.getChannelData(0);
+  for(var i = 0; i < n; i++) d[i] = Math.random()*2 - 1;
+  var src = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
+  src.buffer = b; src.loop = true; f.type = "bandpass"; f.frequency.value = freq || 1000; f.Q.value = q || 1; g.gain.value = 0;
+  src.connect(f); f.connect(g); g.connect(SND.master); src.start();
+  return {
+    set: function(gain, fq){
+      var t = a.currentTime, on = sfxVolume() > 0;
+      g.gain.setTargetAtTime(on ? clamp(+gain || 0, 0, 0.3) : 0, t, 0.06);
+      if(fq) f.frequency.setTargetAtTime(clamp(fq, 60, 8000), t, 0.1);
+    },
+    stop: function(){ try { g.gain.setTargetAtTime(0, a.currentTime, 0.05); src.stop(a.currentTime + 0.3); } catch(e){} }
+  };
+}
 // Browsers allow audio only after a user gesture: wake it on the first one.
 if(typeof window.addEventListener === "function"){
   window.addEventListener("pointerdown", function(){ if(sfxVolume() > 0) audio(); }, {once: true, capture: true});
@@ -241,5 +263,6 @@ function watchBar(stage, opts){
 HQV.engine = {now: now, clamp: clamp, hex: hex, angLerp: angLerp, calm: calm, say: say, tokens: tokens, myClock: myClock,
               fmtTime: fmtTime, dist3: dist3, lib: lib, loadGlb: loadGlb, hasWebGL2: hasWebGL2,
               senderTime: senderTime, jitter: jitter, pushSnap: pushSnap, bracket: bracket,
-              sfx: sfx, sfxVolume: sfxVolume, sfxSetVolume: sfxSetVolume, engineSound: engineSound, engines: Object.keys(ENGINES), watchBar: watchBar};
+              sfx: sfx, sfxVolume: sfxVolume, sfxSetVolume: sfxSetVolume, engineSound: engineSound, engines: Object.keys(ENGINES), watchBar: watchBar,
+              noiseLoop: noiseLoop};
 })();
