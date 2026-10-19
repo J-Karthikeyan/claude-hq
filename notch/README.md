@@ -92,6 +92,12 @@ Claude Code ──hooks──▶ hq_notch_hook.py ──Unix socket──▶ HQ 
 - **Sprites are hotlinked, never bundled.** They are downloaded on first use and cached in
   `~/Library/Caches/HQNotch`. If the CDN is blocked, an original drawn blob takes their place.
 
+**Sharing the notch.** Other notch apps (Sapphire, NotchNook, Boring Notch, Alcove, Coucou, ...) draw
+there too and open on hover, so two of them overlap. Settings → Position: **Auto** (the default) sits in
+the notch, and steps just left of it while one of those apps is running (and back when it quits);
+or pin it **In the notch**, **Left of it** or **Right of it**. Beside the notch the pill is a compact
+capsule and the panel opens below it.
+
 Settings: the gear in the notch's header. Sprites (2D / 3D / Match HQ, with a live preview of
 your sessions), sounds, show idle sessions, approve from the notch (off = every request goes
 straight to the terminal), phone alerts (server, topic with Copy / New, away-only, Send a

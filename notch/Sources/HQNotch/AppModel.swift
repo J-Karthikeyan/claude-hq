@@ -58,6 +58,18 @@ final class AppModel: ObservableObject {
     }
     /// Settings speaks in "on" terms.
     var soundsOn: Bool { get { !muted } set { muted = !newValue } }
+    /// Where the pill sits (Placement.auto steps beside the notch while another notch app runs).
+    @Published var placement = Placement(rawValue: UserDefaults.standard.string(forKey: "hqnotch.placement") ?? "") ?? .auto {
+        didSet { UserDefaults.standard.set(placement.rawValue, forKey: "hqnotch.placement") }
+    }
+    /// The other notch app running now (its name), if any.
+    @Published var otherNotchApp: String?
+    var placed: Placement { placement.resolved(otherNotchApp: otherNotchApp != nil) }
+    func scanNotchApps() {
+        let apps = NSWorkspace.shared.runningApplications.map { (bundleId: $0.bundleIdentifier, name: $0.localizedName) }
+        let found = NotchNeighbours.running(apps, own: Bundle.main.bundleIdentifier)
+        if found != otherNotchApp { otherNotchApp = found }
+    }
     /// Which sprites to draw: 2D, 3D, or whatever pack HQ itself uses.
     @Published var spriteSetting = SpriteSetting(rawValue: UserDefaults.standard.string(forKey: "hqnotch.sprites") ?? "") ?? .twoD {
         didSet { UserDefaults.standard.set(spriteSetting.rawValue, forKey: "hqnotch.sprites") }

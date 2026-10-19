@@ -43,6 +43,16 @@ final class NotchController {
             Task { @MainActor in self?.layout() }
         }
         model.$attention.dropFirst().sink { [weak self] _ in self?.popOpen() }.store(in: &bag)
+        // step aside for another notch app (and come back when it quits), or follow the setting
+        let ws = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.model.scanNotchApps() }
+            }
+        }
+        model.$placement.dropFirst().sink { [weak self] _ in DispatchQueue.main.async { self?.layout() } }.store(in: &bag)
+        model.$otherNotchApp.dropFirst().removeDuplicates().sink { [weak self] _ in DispatchQueue.main.async { self?.layout() } }.store(in: &bag)
+        model.scanNotchApps()                   // after the sinks, so finding one at launch re-lays out
         mouseTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.trackMouse() }
         }
@@ -92,19 +102,33 @@ final class NotchController {
             // No notch: a small pill under the middle of the menu bar.
             notch = CGSize(width: 120, height: max(24, sc.frame.maxY - sc.visibleFrame.maxY))
         }
-        let f = sc.frame
-        panel.setFrame(NSRect(x: f.midX - Self.panelSize.width / 2, y: f.maxY - Self.panelSize.height,
+        let f = sc.frame, place = model.placed, beside = place != .notch
+        // Beside the notch, the pill is a capsule of its own (no gap for the notch) just left or
+        // right of it; the expanded panel hangs below, centred on it but kept on the screen.
+        let pill = Self.pillWidth(notch: notch, beside: beside)
+        let anchor: CGFloat = place == .left ? f.midX - notch.width/2 - 8 - pill/2
+            : place == .right ? f.midX + notch.width/2 + 8 + pill/2 : f.midX
+        let x = min(max(f.minX, anchor - Self.panelSize.width / 2), f.maxX - Self.panelSize.width)
+        panel.setFrame(NSRect(x: x, y: f.maxY - Self.panelSize.height,
                               width: Self.panelSize.width, height: Self.panelSize.height), display: true)
-        panel.contentView = NSHostingView(rootView: NotchRoot(model: model, notch: notch)
+        pillCentre = anchor - x
+        panel.contentView = NSHostingView(rootView: NotchRoot(model: model, notch: notch, gap: beside ? 0 : notch.width,
+                                                              anchor: pillCentre - Self.panelSize.width / 2)
             .environment(\.colorScheme, .dark))      // the notch is always black: dark system controls
     }
+    /// The closed pill's width: two wings, and the notch between them when it sits in it.
+    static func pillWidth(notch: CGSize, beside: Bool) -> CGFloat { (beside ? 0 : notch.width) + 2 * (NotchRoot.wing + 10) }
+    /// The pill's centre, from the panel's left edge.
+    private var pillCentre: CGFloat = NotchController.panelSize.width / 2
 
     /// Screen rect of what is currently drawn (closed pill or expanded panel).
     private var visibleRect: NSRect {
         let pf = panel.frame
         let size = model.expanded ? model.expandedSize
-            : CGSize(width: notch.width + 2 * (NotchRoot.wing + 10), height: notch.height)
-        return NSRect(x: pf.midX - size.width / 2, y: pf.maxY - size.height, width: size.width, height: size.height)
+            : CGSize(width: Self.pillWidth(notch: notch, beside: model.placed != .notch), height: notch.height)
+        // the expanded panel is centred on the pill too, but never past the panel's own edges
+        let cx = model.expanded ? min(max(pillCentre, size.width/2), pf.width - size.width/2) : pillCentre
+        return NSRect(x: pf.minX + cx - size.width / 2, y: pf.maxY - size.height, width: size.width, height: size.height)
     }
 
     private func trackMouse() {

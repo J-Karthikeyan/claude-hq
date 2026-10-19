@@ -23,7 +23,11 @@ struct NotchShape: Shape {
 struct NotchRoot: View {
     @ObservedObject var model: AppModel
     let notch: CGSize          // the hardware notch (or a menu-bar sized stand-in)
+    var gap: CGFloat           // the room left for the notch in the closed pill (0 beside it)
+    var anchor: CGFloat = 0    // the pill's centre, from the panel's centre (beside the notch)
     static let wing: CGFloat = 64
+    /// How far the expanded panel can slide within the window (its width minus the panel's), each way.
+    static let slack: CGFloat = (NotchController.panelSize.width - expandedWidth) / 2
     static let expandedWidth: CGFloat = 500
 
     var body: some View {
@@ -33,6 +37,7 @@ struct NotchRoot: View {
             }
             .background(NotchShape(radius: model.expanded ? 22 : 12).fill(Theme.bg))
             .clipShape(NotchShape(radius: model.expanded ? 22 : 12))
+            .offset(x: model.expanded ? min(max(anchor, -Self.slack), Self.slack) : anchor)   // beside the notch: under the pill
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -53,7 +58,7 @@ struct NotchRoot: View {
             }
             .frame(width: Self.wing, alignment: .leading)
             .padding(.leading, 10)
-            Color.clear.frame(width: notch.width)
+            Color.clear.frame(width: gap)
             HStack(spacing: 4) {
                 if needs > 0 {
                     Text("\(needs)").font(.system(size: 11, weight: .heavy, design: .rounded))
@@ -586,6 +591,15 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 previewRow
             }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Position").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.subtle)
+                Picker("Position", selection: $model.placement) {
+                    ForEach(Placement.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden()
+                Text(placementNote).font(.system(size: 10.5)).foregroundStyle(Theme.faint)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Divider().overlay(Theme.card)
             SettingToggle(title: "Sounds", detail: "A chime when a session needs you or finishes.", isOn: $model.soundsOn)
             SettingToggle(title: "Show idle sessions", detail: "Sessions waiting for your next prompt.", isOn: $model.showIdle)
@@ -604,6 +618,17 @@ struct SettingsView: View {
             }
         }
         .padding(.top, 2)
+    }
+
+    private var placementNote: String {
+        let other = model.otherNotchApp
+        switch model.placement {
+        case .auto: return other.map { "\($0) is in the notch, so HQ Notch sits just left of it." }
+            ?? "In the notch. If another notch app (Sapphire, NotchNook, ...) starts, HQ Notch steps aside."
+        case .notch: return other.map { "\($0) is in the notch too: they may overlap." } ?? "Always in the notch."
+        case .left: return "Always just left of the notch."
+        case .right: return "Always just right of the notch."
+        }
     }
 
     private var spriteNote: String {

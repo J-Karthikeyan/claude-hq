@@ -56,6 +56,13 @@ expect(Creature(species: 1, stage: 4, shiny: false, megaSlug: "gengar-mega").meg
 let evoJSON = #"{"sessions":[{"sessionId":"e","status":"idle","kind":"interactive","pid":1,"creature":{"species":4,"stage":4,"shiny":false,"evo":{"branchDex":700}}}]}"#
 expect(HQSession.parse(Data(evoJSON.utf8)).first?.creature?.dex(sessionId: "e") == 700, "creature.evo parsed: Sylveon")
 
+// placement beside other notch apps
+expect(Placement.auto.resolved(otherNotchApp: true) == .left && Placement.auto.resolved(otherNotchApp: false) == .notch, "auto steps aside")
+expect(Placement.right.resolved(otherNotchApp: false) == .right && Placement.notch.resolved(otherNotchApp: true) == .notch, "a fixed choice stays")
+expect(NotchNeighbours.running([(bundleId: "com.apple.finder", name: "Finder"), (bundleId: "com.cshariq.sapphire", name: "Sapphire")], own: "com.claudehq.notch") == "Sapphire", "Sapphire by id")
+expect(NotchNeighbours.running([(bundleId: "x.y", name: "NotchNook")], own: nil) == "NotchNook", "by name")
+expect(NotchNeighbours.running([(bundleId: "com.claudehq.notch", name: "HQ Notch"), (bundleId: "com.apple.Safari", name: "Safari")], own: "com.claudehq.notch") == nil, "not ourselves, not others")
+
 // MARK: store lifecycle
 
 var st = SessionStore()
