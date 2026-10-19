@@ -2,10 +2,11 @@
    HQ Notch (notch/) puts your party in the Mac's notch, with approvals from there. This asks
    once, the next time HQ opens on a Mac where it is not installed: Install now (ext_notch.py runs
    notch/tools/install.py), Copy the command, Not now (again in 3 days), or Don't show again.
-   It never opens over another dialog, and nothing here leaves the machine. */
+   It never opens over another dialog, and nothing here leaves the machine. Settings > HQ Notch
+   and the command palette reopen it any time (openNotchInvite), installed or not. */
 var NOTCH_INVITE_KEY = "hq_notch_invite";          // "never" | "installed" | "later:<ms>"
 var NOTCH_INVITE_LATER = 3*24*3600*1000;
-var NOTCH_INVITE = {timer: 0, poll: 0, opener: null};
+var NOTCH_INVITE = {timer: 0, poll: 0, opener: null, manual: false};
 function notchInviteSeen(){
   var v = ""; try { v = localStorage.getItem(NOTCH_INVITE_KEY) || ""; } catch(e){}
   if(v === "never" || v === "installed") return true;
@@ -56,7 +57,12 @@ function notchInviteRender(s, phase, msg){
   b.appendChild(ul);
   b.appendChild(niEl("p", "ni-note muted", "Installing builds the app (about a minute), puts it in ~/Applications, starts it at login, and adds HQ Notch's hooks to ~/.claude/settings.json (backed up first; only its own entries)."));
   var row = niEl("div", "ni-actions");
-  if(phase === "running"){
+  if(phase === "installed"){
+    row.appendChild(niEl("span", "ni-status ok", "HQ Notch is installed on this Mac" + (s && s.running ? " and running." : ".")));
+    var re = niEl("button", "hbtn ghost", "Reinstall"); re.type = "button"; re.disabled = !(s && s.tools);
+    re.addEventListener("click", notchInviteInstall); row.appendChild(re);
+    var cl = niEl("button", "hbtn", "Close"); cl.type = "button"; cl.id = "notchInviteGo"; cl.addEventListener("click", function(){ notchInviteClose("installed"); }); row.appendChild(cl);
+  } else if(phase === "running"){
     row.appendChild(niEl("span", "ni-status", "Installing… this takes about a minute."));
   } else if(phase === "done"){
     row.appendChild(niEl("span", "ni-status ok", "Installed. Look at your notch: new Claude tabs show up there."));
@@ -79,18 +85,19 @@ function notchInviteRender(s, phase, msg){
   b.appendChild(row);
 }
 
-function notchInviteOpen(s){
+function notchInviteOpen(s, manual){
   var back = notchInviteModal();
-  NOTCH_INVITE.opener = document.activeElement;
+  NOTCH_INVITE.opener = document.activeElement; NOTCH_INVITE.manual = !!manual;
   back.classList.add("open"); back.setAttribute("aria-hidden", "false");
-  notchInviteRender(s, "ask");
+  notchInviteRender(s, s && s.installed ? "installed" : "ask");
   var go = $("notchInviteGo"); (go && !go.disabled ? go : $("notchInviteClose")).focus();
   if(typeof announce === "function") announce("New: HQ Notch. Your Claude HQ party in the Mac's notch.");
 }
 function notchInviteClose(why){
   var back = $("notchInviteBack"); if(!back) return;
   if(why === "never" || why === "installed") notchInviteRemember(why);
-  else notchInviteRemember("later:" + Date.now());
+  else if(!NOTCH_INVITE.manual) notchInviteRemember("later:" + Date.now());   // reopened by hand: closing keeps the old choice
+  NOTCH_INVITE.manual = false;
   back.classList.remove("open"); back.setAttribute("aria-hidden", "true");
   if(NOTCH_INVITE.poll){ clearInterval(NOTCH_INVITE.poll); NOTCH_INVITE.poll = 0; }
   var o = NOTCH_INVITE.opener; NOTCH_INVITE.opener = null;
@@ -112,5 +119,14 @@ function notchInviteInstall(){
       }, 2000);
     })
     .catch(function(){ notchStatus().then(function(s){ notchInviteRender(s, "ask", "HQ did not answer."); }); });
+}
+// Reopen by hand (Settings > HQ Notch, command palette), whatever was chosen before.
+function openNotchInvite(){
+  notchStatus().then(function(s){
+    if(!s){ if(typeof toast === "function") toast("HQ did not answer."); return; }
+    if(!s.mac){ if(typeof toast === "function") toast("HQ Notch is for Macs only."); return; }
+    if(!s.available){ if(typeof toast === "function") toast("This HQ has no notch/ folder: update HQ first."); return; }
+    notchInviteOpen(s, true);
+  });
 }
 NOTCH_INVITE.timer = setTimeout(function(){ notchInviteCheck(0); }, 4000);

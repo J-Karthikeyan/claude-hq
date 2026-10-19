@@ -148,6 +148,9 @@ class Page(unittest.TestCase):
         self.assertIn('if(typeof currentModal === "function" && currentModal())', js)   # never over another dialog
         self.assertIn('"X-HQ-Token": CSRF', js)
         self.assertNotIn("innerHTML", js)
+        self.assertIn("function openNotchInvite(", js)                           # reopen by hand any time
+        self.assertIn('id="setNotchOpen"', html)                                 # ...from Settings
+        self.assertIn('label:"HQ Notch"', html)                                   # ...and the command palette
         self.assertNotIn("function el(", js)                                    # 00-core.js owns el()
         with open(os.path.join(ROOT, "ui", "app", "09-drawer.js"), encoding="utf-8") as f:
             drawer = f.read()

@@ -139,6 +139,7 @@ function openSettings(){
   $("setTheme").focus();
 }
 // revert any live preview back to the persisted display prefs, then close.
+if($("setNotchOpen")) $("setNotchOpen").addEventListener("click",function(){ if(typeof openNotchInvite==="function") openNotchInvite(); });
 function closeSettings(){ if(typeof charClosePreview==="function") charClosePreview(); applyDisplayPrefs(); $("settingsBack").classList.remove("open"); restoreOpener(); }
 // change theme -> persist immediately (localStorage is authoritative) so it survives
 // both the every-tick syncConfig re-apply AND a page reload; sync to server if known.

@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 2.6.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 2.6.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -334,6 +334,9 @@ and feature guide.
 
 ## Changelog
 
+- **2.6.1 — Reopen the HQ Notch dialog.** Closed the "New: HQ Notch" dialog without reading it? Open it
+  again any time from **Settings > HQ Notch** or the command palette (Cmd-K, "HQ Notch"). When the notch
+  is already installed it says so and offers **Reinstall**. Closing a reopened dialog keeps your earlier choice.
 - **2.6.0 — Get HQ Notch from HQ.** The next time you open HQ on a Mac without HQ Notch, it asks once:
   **Install now** (HQ runs `notch/tools/install.py` for you; it needs the Xcode Command Line Tools), copy the
   command, ask again in 3 days, or never. Local only: `GET /api/notch/status`, `POST /api/notch/install`

@@ -57,6 +57,7 @@ function buildCmdkItems(q){
   if(typeof hqJumpCity==="function") items.push({group:"Views", ic:"\uD83C\uDFD9", label:"Jump to Arena City", sub:"the 3D street, the fountain and the bike park", run:function(){ hqJumpCity(); }});
   // actions
   items.push({group:"Actions", ic:"⚙️", label:"Open Settings", run:function(){ openSettings(); }});
+  if(typeof openNotchInvite==="function") items.push({group:"Actions", ic:"\uD83D\uDCBB", label:"HQ Notch", sub:"install or check the notch app", run:function(){ openNotchInvite(); }});
   items.push({group:"Actions", ic:"⬇️", label:"Export CSV", run:function(){ downloadExport("csv"); }});
   items.push({group:"Actions", ic:"⬇️", label:"Export JSON", run:function(){ downloadExport("json"); }});
   items.push({group:"Actions", ic:"🔔", label:"Toggle notifications", run:function(){ $("bellBtn").click(); }});
