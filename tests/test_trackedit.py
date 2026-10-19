@@ -77,10 +77,11 @@ class TrackEditorStatic(unittest.TestCase):
         doc = doc[:doc.index("\n}")]
         keys = set(re.findall(r"\b([a-zA-Z]+):", doc))
         self.assertEqual(keys, {"kind", "v", "name", "data", "tiles", "scenery", "theme", "sky", "fog", "ground"})
-        import sys
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        from test_arena import FORBIDDEN_KEYS
-        self.assertEqual(keys & set(FORBIDDEN_KEYS), set())
+        # Local-only fields that must never reach the Arena (was test_arena.FORBIDDEN_KEYS).
+        forbidden = {"prompt", "prompts_text", "reply", "text", "content", "path", "paths",
+                     "cwd", "folder", "project", "projectName", "sessionId", "sessionTitle",
+                     "title", "file", "files"}
+        self.assertEqual(keys & forbidden, set())
 
     def test_publish_only_when_the_workshop_is_here(self):
         self.assertIn('typeof window.workshopPublish === "function"', self.src)

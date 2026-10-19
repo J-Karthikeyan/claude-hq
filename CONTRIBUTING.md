@@ -12,21 +12,20 @@ Two files do everything:
 
 | File | Role |
 |---|---|
-| `dashboard.py` | Stdlib-only HTTP server (`http.server.ThreadingHTTPServer`). Reads live agents + transcripts, computes cost/creature/season data, serves the JSON API and the page. **No `pip install`, ever.** |
+| `dashboard-rs/` | The HQ server (`claudehq`, Rust: axum + tokio). Reads live agents + transcripts, computes cost/creature/season data, serves the JSON API and the page. |
 | `index.html` + `ui/` | The frontend: `index.html` is the markup template, `ui/` holds its CSS and script split by area; the server stitches them into one page (§2). |
 
 Optional, and out of scope for most contributions: `arena.py` (opt-in multiplayer client, also stdlib-only), `backend/` + `backend-rs/` (the Arena server someone self-hosts), and the `*-wizard.sh` / `ops/` deploy tooling.
 
-**The no-build-step rule is absolute.** The LaunchAgent and `python3 dashboard.py` serve files *as they are on disk*. There is no bundler, transpiler, minifier, or `node_modules`. This means:
+**The no-build-step rule is absolute.** The LaunchAgent and `claudehq` serve files *as they are on disk*. There is no bundler, transpiler, minifier, or `node_modules`. This means:
 
 - **No npm, no package.json, no build/watch scripts.** If a change would require a build step to run, it does not belong here.
 - **No TypeScript, JSX, SCSS, or any dialect that needs compilation.** Plain `.js`, plain `.css`, plain `.html`.
 - **No external JS/CSS libraries.** No React, no jQuery, no Tailwind, no icon fonts, no Chart.js. Charts are hand-drawn SVG; icons are an inline SVG sprite (Lucide geometry, MIT). Keep it that way.
   - **One library exception (the 3D games):** games/vendor/ holds vendored MIT three.js (r186, unminified, only its import paths rewritten, reproducible with tools/vendor_three.py), served only from 127.0.0.1, loaded lazily by the 3D games (Mini Golf, Kart Racing, Platformer Rush, Blaster Arena), never fetched from a third party at runtime. It is not a precedent for other libraries. Game assets are covered in §7: each 3D game keeps its models in its own folder (`games/golf/`, `games/kart/`, `games/platformer/`, `games/fps/`). The `/games/` route serves only `vendor/<name>.js` and `<game>/<name>.glb|json|png` for those folders (tests in `tests/test_games.py`).
 - **No import maps requiring a server rewrite, no bare specifiers.** ES module imports must be relative paths (`./foo.js`) that the plain static server can resolve directly.
-- Backend Python targets **3.x standard library only** (see the imports block at the top of `dashboard.py`: `argparse, glob, hashlib, json, os, re, secrets, shlex, signal, subprocess, sys, threading, time, webbrowser, datetime, http.server`). Adding an import that isn't stdlib is a bug.
 
-`GET /` re-assembles `index.html` + `ui/` from disk on every change (frontend edits are live on refresh). After editing `dashboard.py` under the LaunchAgent, reload the backend:
+`GET /` re-assembles `index.html` + `ui/` from disk on every change (frontend edits are live on refresh). After changing `dashboard-rs/` under the LaunchAgent, rebuild (`cargo build --release --locked --manifest-path dashboard-rs/Cargo.toml`) and reload the server:
 
 ```bash
 launchctl kickstart -k gui/$(id -u)/com.claudehq.dashboard
@@ -34,7 +33,7 @@ launchctl kickstart -k gui/$(id -u)/com.claudehq.dashboard
 
 ### Backend security model (do not weaken)
 
-Every request is gated by the loopback + CSRF machinery already in `dashboard.py`; preserve all of it when adding endpoints:
+Every request is gated by the loopback + CSRF machinery already in `dashboard-rs/src/server.rs`; preserve all of it when adding endpoints:
 
 - Server binds to `127.0.0.1` **only** — never `0.0.0.0`.
 - `_host_ok()` rejects any request whose `Host` header isn't `127.0.0.1`/`localhost`/empty with **403**. Every `do_GET`/`do_POST` calls it first.
@@ -46,7 +45,7 @@ Every request is gated by the loopback + CSRF machinery already in `dashboard.py
 
 ## 2. File & module layout
 
-`index.html` is a template: markup, plus `@include` lines for its CSS and script, which live in `ui/`. `dashboard.py` (`assemble_index()`) stitches them back in, in order, every time the page is served, so the browser still gets one page with one inline script (same globals, hoisting and `"use strict"` as before the split). There is no build step: edit a file in `ui/` and reload.
+`index.html` is a template: markup, plus `@include` lines for its CSS and script, which live in `ui/`. The server (`dashboard-rs`) stitches them back in, in order, every time the page is served, so the browser still gets one page with one inline script (same globals, hoisting and `"use strict"` as before the split). There is no build step: edit a file in `ui/` and reload.
 
 ```
 index.html             # markup + //@include lines (template)
@@ -65,7 +64,7 @@ Rules for where new code goes:
 - **New pure helper** (formatting, hashing, seeding, escaping) → `ui/app/00-core.js`. Keep it small and side-effect-free.
 - **Anything touching creatures, sprites, evolution, packs** → `ui/app/01-creatures.js`. This is the single home for the `creature*`, `poke*`, `monster*`, `troop*`, `animo*` families.
 - **A new view** → its own `ui/app/NN-<view>.js` plus an `//@include` line in `index.html`, wired into the view switcher (`ui/app/10-views.js`). Add the tab button with proper `role="tab"` + `aria-selected` (see §7) and map its number key.
-- **A new API endpoint** → add the handler branch in `dashboard.py` next to the existing routes, gated by `_host_ok()`; document it in the README's HTTP API line.
+- **A new API endpoint** → add the route in `dashboard-rs/src/server.rs` next to the existing ones, behind the same host/CSRF gates; document it in the README's HTTP API line.
 - **Styles** → `ui/hq.css` (tokens at the top). Never inline a hex color (see §4).
 
 During the refactor, when you touch a region that is still inline, **extract that region** rather than adding more inline code beside it. Don't start new inline `<style>`/`<script>` content.
@@ -149,7 +148,7 @@ Claude HQ's entire value proposition is that **your conversations never leave yo
 
 Concretely:
 
-- **All same-origin traffic is fine and is the norm.** Every `fetch()` and the `EventSource('/api/stream')` in the frontend targets local `/api/...` paths served by `dashboard.py` on `127.0.0.1`. That is not egress. Keep it that way — never point a `fetch` at an external host.
+- **All same-origin traffic is fine and is the norm.** Every `fetch()` and the `EventSource('/api/stream')` in the frontend targets local `/api/...` paths served by `claudehq` on `127.0.0.1`. That is not egress. Keep it that way — never point a `fetch` at an external host.
 - **The only outbound requests to the public internet are `<img src>` sprite loads** (see §6) and the **opt-in Arena** channel. Nothing else may leave the machine.
 - **Sprite CDNs are privacy-safe by construction:** an `<img>` request carries only a **Pokédex number / creature slug** in the URL path — a value derived from `hash(sessionId) % 48`, which is not reversible into any session content and reveals nothing about what you were doing. No query params, no headers with your data, no beacons. That's why the "pokemon" packs are acceptable. The "monsters" (and Village troop) packs are 100% locally generated SVG and send nothing at all — they exist precisely so a fully-offline user leaks zero bytes.
 - **Arena is off by default** and, when enabled, publishes **daily counts only** (prompts, tool calls, artifacts, tokens) — never prompt text, replies, file paths, project/folder names, session ids, or titles. Tool names are allowlisted (anything not a built-in Claude Code tool — e.g. `mcp__<server>__<tool>`, which often carries an employer/client name — is bucketed as `Other` before the wire). Cost sharing and live status are separately opt-in. The Arena device token lives in `arena-link.json`, **outside** `config.json`, so it is never served to the page. The wire format rejects unknown fields so a future change can't silently start leaking one.
@@ -212,9 +211,9 @@ python3 -m unittest discover -s tests -v
 
 CI (`.github/workflows/tests.yml`) runs exactly this on Python 3.12 for every push to `main` and every PR — nothing is installed.
 
-- **Add/extend tests for backend logic you change**, especially the cost model, config validation, creature/stage math, and any parsing of transcript JSONL. Existing suites (`test_dashboard.py`, `test_arena.py`, `test_arena_nudge.py`) show the style: import `dashboard`/`arena` directly, assert on pure functions (`_price_for`, `_usage_cost`, `stage_for`, …). Prefer testing pure functions — that's another reason to keep logic in small pure helpers.
+- **Add/extend tests for backend logic you change**, especially the cost model, config validation, creature/stage math, and any parsing of transcript JSONL. Server logic is tested in Rust (`cd dashboard-rs && cargo test`): unit tests next to the code, `tests/http.rs` for the gates on a real server. Prefer testing pure functions — that's another reason to keep logic in small pure helpers.
 - Backend defaults must be safe on garbage input (see `_price_for(None) → sonnet`, `_usage_cost("opus", None) → zeros`). New parsers should be tested against `None`, `""`, and non-dict inputs.
-- **Frontend has no automated harness** (no build = no bundled test runner). Verify manually: run `python3 dashboard.py`, exercise the changed view, and check:
+- **Frontend has no automated harness** (no build = no bundled test runner). Verify manually: run `dashboard-rs/target/release/claudehq`, exercise the changed view, and check:
   - every theme (aurora/midnight/forest/mono/contrast), light and dark;
   - Calm mode on (animations stop) and Large-text on (layout holds);
   - keyboard-only navigation of the changed area;
@@ -232,7 +231,7 @@ CI (`.github/workflows/tests.yml`) runs exactly this on Python 3.12 for every pu
   - `Keep analytics trend-chart labels a fixed size at any width`
 - Keep commits focused; explain *why* in the body when the subject can't. Reference issues/PRs (`#30`) where relevant.
 - **Do not commit runtime state or secrets:** `config.json`, `sessions-meta.json`, `arena-link.json`, `claude-hq*.log`, `verify_*.png`, `__pycache__/` are all git-ignored — keep them so.
-- **PRs:** state what changed and why, call out anything touching **privacy, network egress, security (Host/CSRF), or third-party assets** explicitly (these get the closest review), list how you verified (tests run + manual checks from §8), and attach screenshots for visual changes. Bump `APP_VERSION` in `dashboard.py` and add a Changelog entry in `README.md` for user-facing releases (patch = fixes/polish, minor = features). Credit external contributors in the README, as the existing entries do.
+- **PRs:** state what changed and why, call out anything touching **privacy, network egress, security (Host/CSRF), or third-party assets** explicitly (these get the closest review), list how you verified (tests run + manual checks from §8), and attach screenshots for visual changes. Bump `APP_VERSION` in `dashboard-rs/src/app.rs` and add a Changelog entry in `README.md` for user-facing releases (patch = fixes/polish, minor = features). Credit external contributors in the README, as the existing entries do.
 - CI must be green (the unittest workflow) before merge.
 
 ---

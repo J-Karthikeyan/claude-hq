@@ -1,6 +1,6 @@
 # dashboard-rs (`claudehq`)
 
-A Rust port of the local Claude HQ server: `dashboard.py` and everything it
+The Claude HQ server. It began as a Rust port of the Python `dashboard.py` and everything it
 imports (`arena.py`, `music.py`, `worksignals.py`, `ext_skills.py`,
 `ext_loot.py`, `ext_prestige.py`, `ext_maps.py`, `ext_cups.py`,
 `ext_boss.py`, `ext_skate.py`, `ext_notch.py`), at parity with
@@ -12,18 +12,17 @@ reply. Same routes, same gates, same JSON, same state files, same Arena privacy
 boundary. The frontend (`index.html`, `ui/`, `games/`) is unchanged and served
 from the repo as before.
 
-It runs **alongside** the Python server, the same way `backend-rs/` did for the
-Arena: the Python files are untouched, both read and write the same state
-files, and you can switch back and forth with no migration.
+Since 2.7.0 it is the only HQ server: the Python one was removed. It reads and writes the
+same state files the Python HQ did, so a Python install switches over with no migration.
 
 ## Build and run
 
 ```bash
 ~/.cargo/bin/cargo build --release --manifest-path dashboard-rs/Cargo.toml
-dashboard-rs/target/release/claudehq --no-open --port 8766   # try it next to the Python one on 8765
+dashboard-rs/target/release/claudehq                         # http://127.0.0.1:8765
 ```
 
-The CLI matches `dashboard.py`:
+The CLI (the same flags the Python HQ had):
 
 | flag | |
 |---|---|
@@ -33,8 +32,7 @@ The CLI matches `dashboard.py`:
 | `--print-plist` | print that plist and exit |
 | `--root DIR` | *(new)* the Claude HQ folder. Defaults to `$CLAUDEHQ_ROOT`, else the folder above the binary that holds `index.html` + `ui/` (so `dashboard-rs/target/release/claudehq` finds the repo) |
 
-To make the Rust server the one that starts at login (it uses the same label,
-so it replaces the Python agent; `python3 dashboard.py --install` switches back):
+To make it start at login (same label the Python HQ used, so it replaces an old Python agent):
 
 ```bash
 dashboard-rs/target/release/claudehq --install
@@ -65,7 +63,8 @@ transcript pass, busy spans and work signals.
 
 ## Parity
 
-`tools/parity.py` (stdlib only) starts `dashboard.py` and `claudehq` on two
+*Historical: the parity harness, `tools/parity.py`, was removed with the Python HQ in 2.7.0 (it is in git
+history). What it did and found:* it started `dashboard.py` and `claudehq` on two
 ports (never 8765) against **one** temp copy of the Claude HQ folder: code
 symlinked, state files copied, no `arena-link.json`, the Arena URL blanked and
 work signals off, so nothing can pair or leave the machine. It GETs every
@@ -79,13 +78,6 @@ stamp in `vial.json` aside), and runs 11 checks on the POST
 gates (CSRF, Origin, Host, body caps, bad bodies; `/api/notch/install` only
 without a token or from a foreign Origin, so the real installer never runs).
 
-```bash
-# frozen: copies ~/.claude/projects + ~/.cursor/projects into a temp HOME and stubs
-# `claude agents` with a fixed list, so both servers see identical, still data
-python3 dashboard-rs/tools/parity.py --state-from /path/to/claude-hq --frozen-home
-# live: the real ~/.claude, real `claude agents` (expect drift in actively growing sessions)
-python3 dashboard-rs/tools/parity.py --state-from /path/to/claude-hq
-```
 
 It deliberately skips `/api/music/now` (AppleScript to music apps),
 `/api/music/search` / `oembed` with real input (YouTube) and `POST /api/update`
