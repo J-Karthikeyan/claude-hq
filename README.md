@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 2.7.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 2.8.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -330,6 +330,18 @@ and feature guide.
 
 ## Changelog
 
+- **2.8.0 — Valley Rally.** Point-to-point off-road stages in a cel-shaded forest, dry hills and snow,
+  by day or night: 20 gates per stage with split times against your best, a road-ahead map, and a
+  rally HUD (segmented tachometer, gear, big speed, handbrake / clutch / TC lamps). A detailed car
+  model: raycast suspension with weight transfer, Pacejka-style tyres on seven surfaces, AWD / RWD /
+  FWD with limited-slip diffs, an automatic 6-speed, handbrake turns and power drifts, optional
+  countersteer and traction-control assists, keyboard and gamepad. Three original cars (Moraine T4,
+  Saltcedar 240R, Pipit Sprint 16), chase / bumper / hood cameras, dust, ruts and mud, a Graphics
+  setting (Auto / High / Medium / Low). Solo time trials with your ghost, a daily stage, 3-stage
+  rally events, and live room races of up to 8 (ghost cars) refereed by the Rust Arena
+  (`backend/src/rally.rs`: gates in order, speed and teleport guards, splits, events, results,
+  per-stage leaderboards, Quick Play, the map gallery). In a room only the stage (seed + road and
+  gates) and your car's position frames leave the machine.
 - **2.7.0 — The Python HQ is gone; the Rust HQ is the only one.** `dashboard.py` and the modules it
   imported (`arena.py`, `music.py`, `worksignals.py`, `ext_*.py`) are removed; `dashboard-rs/` (`claudehq`)
   serves everything, with the same routes and the same data files. **Still on the Python HQ?** After this
