@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 2.6.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 2.6.2** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -334,6 +334,16 @@ and feature guide.
 
 ## Changelog
 
+- **2.6.2 — HQ Notch on the Rust HQ, and an Update that rebuilds it.** The Rust HQ (`dashboard-rs`,
+  `claudehq`) now has HQ Notch's routes (`/api/notch/status`, `/api/notch/install`) and evolution
+  picks (`/api/evo-choice`, `creature.evo` in `/api/sessions`), so the "New: HQ Notch" dialog and the
+  notch's evolution forms work on either HQ. HQ's **Update** on the Rust HQ now rebuilds `claudehq`
+  (`cargo build --release --locked`) when `dashboard-rs/` changed, before restarting; a failed build
+  keeps the old server running and says what to run. A Rust HQ built before this needs **one** manual
+  rebuild (`cargo build --release --manifest-path dashboard-rs/Cargo.toml`, then restart HQ); the
+  dialog now detects that case (and a Python HQ that was not restarted after a pull) and shows the
+  exact command to copy. Still Python-only for now: the Overflow Vial, archived (prompt-less) cards
+  and the Arena City skate board.
 - **2.6.1 — Reopen the HQ Notch dialog.** Closed the "New: HQ Notch" dialog without reading it? Open it
   again any time from **Settings > HQ Notch** or the command palette (Cmd-K, "HQ Notch"). When the notch
   is already installed it says so and offers **Reinstall**. Closing a reopened dialog keeps your earlier choice.
