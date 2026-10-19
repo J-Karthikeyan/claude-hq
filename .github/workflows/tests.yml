@@ -1,27 +1,31 @@
-name: tests
+name: ci
 
+# Build checks only; nothing here releases anything. Deploys go through
+# ops/release.sh on the Arena host, which waits for these checks to pass.
 on:
   push:
     branches: [main]
   pull_request:
 
 jobs:
-  unittest:
+  # Repo-level checks: frontend <-> Arena sync (game data, protocol tables),
+  # the deploy panel and release scripts. Stdlib only; node runs the JS halves.
+  tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # Stdlib only — nothing to install.
-      - name: Run unit tests
+      - name: Run repo tests
         run: python3 -m unittest discover -s tests -v
 
-  rust:
+  # The Arena server (backend/): tests, lints, and the exact image a deploy builds.
+  backend:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: backend-rs
+        working-directory: backend
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -29,13 +33,21 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: backend-rs
-      - name: Run Rust tests
+          workspaces: backend
+      - name: Run Arena tests
         run: cargo test --locked
       - name: Clippy (warnings are errors)
         run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Build the deploy image
+        run: docker build --build-arg ARENA_VERSION=ci -t claude-hq-arena:ci .
+      - name: Image answers its health check
+        run: |
+          docker run -d --name arena -e ARENA_SECRET_KEY=ci-only -e ARENA_DATABASE_URL=sqlite:/tmp/arena.db claude-hq-arena:ci
+          for i in $(seq 1 30); do docker exec arena arena-health && exit 0; sleep 1; done
+          docker logs arena; exit 1
 
-  dashboard-rs:
+  # The local HQ server (dashboard-rs/), on macOS like the people who run it.
+  dashboard:
     runs-on: macos-latest
     defaults:
       run:
@@ -48,7 +60,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: dashboard-rs
-      - name: Run Rust HQ tests
+      - name: Run HQ server tests
         run: cargo test --locked
       - name: Clippy (warnings are errors)
         run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Release build
+        run: cargo build --release --locked
+      # The page itself: claudehq serves it from a throwaway folder and headless
+      # Chrome loads it; any JavaScript error while loading fails the job.
+      - name: UI smoke test
+        working-directory: .
+        run: python3 tools/ui_smoke.py dashboard-rs/target/release/claudehq

@@ -62,7 +62,7 @@ if [ ! -f .env ]; then
   printf '    GitHub Client ID: '; read -r CID
   printf '    GitHub Client Secret: '; read -rs CSEC; echo
   cat > .env <<EOF
-ARENA_SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_urlsafe(48))')
+ARENA_SECRET_KEY=$(openssl rand -base64 48 | tr -d '\n/+=')
 ARENA_GITHUB_CLIENT_ID=$CID
 ARENA_GITHUB_CLIENT_SECRET=$CSEC
 EOF

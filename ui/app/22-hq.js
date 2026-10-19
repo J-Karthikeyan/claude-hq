@@ -481,7 +481,7 @@ function hqRenderHere(){
   });
 }
 
-/* ---- Arena City skate board: each player's best combo this UTC week (backend-rs/src/skate.rs) ----
+/* ---- Arena City skate board: each player's best combo this UTC week (backend/src/skate.rs) ----
    Only a combo's total and its trick count leave this machine (ext_skate.py checks both), and
    only when paired, only for a new best this week. The board is read through the local proxy. */
 var HQ_SKATE = {board:null, at:0, loading:false, post:null, timer:0, sentAt:0, err:null};

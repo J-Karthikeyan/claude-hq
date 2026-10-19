@@ -65,7 +65,7 @@ echo "$line"
         with open(self.responses, "w") as f:
             f.write("\n".join(responses) + "\n")
         env = dict(os.environ, PATH=self.bin + os.pathsep + os.environ["PATH"],
-                   ARENA_SKIP_PULL="1", ARENA_IMPL="py", ARENA_CI_WAIT=wait)
+                   ARENA_SKIP_PULL="1", ARENA_CI_WAIT=wait)
         p = subprocess.run(["bash", os.path.join(self.repo, "ops", "release.sh"), "deploy"],
                            env=env, capture_output=True, text=True, timeout=60)
         return p.stdout + p.stderr
@@ -78,7 +78,7 @@ echo "$line"
         self.assertIn("waiting on: backend, rust (passed: unittest)", out)
         self.assertEqual(out.count("holding for CI"), 1)
         self.assertIn("CI passed", out)
-        self.assertIn("Building py", out)
+        self.assertIn("Building rs", out)
 
     def test_waits_for_ci_that_has_not_started(self):
         out = self.deploy(json.dumps({"check_runs": []}), checks(unittest="success"))

@@ -183,7 +183,7 @@ var FS = (function(){
 
 /* ---------- tuning (browser only) ---------- */
 var STEP = 1/120, SEND_EVERY = 0.05, KEEPALIVE = 0.5, SWITCH = 0.25, RESPAWN = 3, PRACTICE_SECS = 60;
-// offline bot brains (solo bot match) — mirrored from backend-rs/src/strike.rs
+// offline bot brains (solo bot match) — mirrored from backend/src/strike.rs
 var BOT_THINK = 0.25, BOT_TURN = 9.0, BOT_AIM = 0.04, BOT_RANGE = 45.0, BOT_REACT = 0.35;
 // solo difficulty: scales the offline bots' aim error, reaction, turn speed, refire pause and
 // close-range mercy (the Arena server keeps its own tuned bots — these only shape the match

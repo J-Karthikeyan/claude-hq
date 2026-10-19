@@ -1,4 +1,4 @@
-"""Vendored Pokemon battle data (games/pokedata.js + backend/app/data/pokemon.json):
+"""Vendored Pokemon battle data (games/pokedata.js + backend/data/pokemon.json):
 the two copies match, every creature the app can show has an entry, every referenced
 move exists and only uses effects the engines implement, and the license ships with it."""
 import json
@@ -9,7 +9,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JS = os.path.join(ROOT, "games", "pokedata.js")
-PY = os.path.join(ROOT, "backend", "app", "data", "pokemon.json")
+PY = os.path.join(ROOT, "backend", "data", "pokemon.json")
 PREFIX = "window.HQV_POKEDATA = "
 
 
@@ -21,9 +21,14 @@ def load_js():
 
 
 def index_html():
-    sys.path.insert(0, ROOT)
-    import dashboard
-    return dashboard.assemble_index()
+    """index.html with its /*@include x*/ and //@include x lines filled in, as the HQ serves it."""
+    with open(os.path.join(ROOT, "index.html"), encoding="utf-8") as f:
+        page = f.read()
+
+    def inc(m):
+        with open(os.path.join(ROOT, m.group(1) or m.group(2)), encoding="utf-8") as g:
+            return g.read()
+    return re.sub(r"^[ \t]*(?:/\*@include ([^*\s]+)\*/|//@include (\S+))[ \t]*$", inc, page, flags=re.M)
 
 
 class PokedataTests(unittest.TestCase):

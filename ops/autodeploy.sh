@@ -73,10 +73,7 @@ if [ "$FIRST" = 1 ]; then
   git log --oneline -n 10 "$LOCAL..$REMOTE" | while read -r line; do log "    $line"; done
 fi
 
-# Which Arena this ships is NOT decided here: release.sh reads it from
-# backend/.release.env, so whatever was last released stays released. Set
-# ARENA_IMPL only to switch, and do that by hand, not from cron.
-log "releasing with ops/release.sh (impl from backend/.release.env)"
+log "releasing with ops/release.sh"
 if ARENA_BRANCH="$BRANCH" "$DIR/ops/release.sh" deploy >>"$LOG" 2>&1; then
   log "deployed ${REMOTE:0:7} OK"
   if [ -n "$DOMAIN" ]; then

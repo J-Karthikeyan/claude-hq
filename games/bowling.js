@@ -1,12 +1,12 @@
 /* Bowling (HQ 2.5): ten-pin on the Mini Golf physics model, with your buddy Pokémon bowling.
  *
  * Solo in the Valley (card "bowl") rolls right here; in an Arena room (card "mp-bowl", up to
- * 8) the Rust Arena referees every ball (backend-rs/src/valley/bowling.rs): it simulates the
+ * 8) the Rust Arena referees every ball (backend/src/valley/bowling.rs): it simulates the
  * roll from {x, aim, power, spin}, keeps the turn order and the score, and sends 'bowl' (the
  * round view), 'roll', 'frame', 'char' and 'done'. The physics is integer-only and lives in
  * the BOWL-SIM block below, mirrored constant for constant from bowling.rs; every browser
  * replays the same roll from the inputs only to animate it, so everyone sees the same pins
- * (tests/test_bowl_sync.py runs this block against backend-rs/tests/bowl_golden.json).
+ * (tests/test_bowl_sync.py runs this block against backend/tests/bowl_golden.json).
  *
  * The lane is three.js with procedural pins, or a top-down 2D canvas without WebGL2. The
  * bowler is your buddy Pokémon (HQV.pk.spriteEl, whose onerror chain ends at

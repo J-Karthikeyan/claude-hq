@@ -12,10 +12,10 @@ A **local-first, privacy-sensitive** dashboard that reads your own Claude Code s
 4. **IP rule.** Only original art (generated `monsterSVG`, original Village `troopSVG`, MIT Lucide icons/thinking-orbs) or **pre-existing runtime hotlinks** (never bundled). **Third-party models, textures and sounds may be vendored** when their license allows redistribution (e.g. Kenney's CC0 kits in `games/golf/`, `games/kart/`): each game's folder ships the license text alongside, files are served only from 127.0.0.1 and never hotlinked at runtime, and the PR names the source. **No new copyrighted characters/assets/names — specifically no Supercell / Clash assets, characters, or names.** Invent your own.
 5. **Backend security.** Bind `127.0.0.1` only; `_host_ok()` gate on every request; mutations are POST + CSRF (`X-HQ-Token`) + same-site Origin check; validate every path/id against an allowlist (no traversal). Reads GET, mutations POST.
 
-## The Arena backend is Rust (`backend-rs/`)
-The multiplayer Arena runs on the **Rust** server in `backend-rs/` (axum + sqlx; it owns the schema through `backend-rs/migrations/`). **Every Arena backend change goes there**: new routes, game engines (`backend-rs/src/valley/`), room/socket behaviour, results, schema. `backend/` (Python/FastAPI) is frozen: it is the rollback target for `ops/release.sh rollback` and nothing else. Do not add features to it; do not "port back". The local HQ server is Rust too: `dashboard-rs/` (`claudehq`, the HQ app on your machine).
-- Before a PR: `cd backend-rs && cargo test && cargo clippy --locked --all-targets -- -D warnings`; for socket changes also `uv run python backend/scripts/socket_parity.py`.
-- Deploy: `ops/release.sh deploy` (keeps the running impl, now `rs`); `ARENA_IMPL=rs ops/release.sh check` to try a build first.
+## The Arena backend is Rust (`backend/`)
+The multiplayer Arena runs on the **Rust** server in `backend/` (axum + sqlx; it owns the schema through `backend/migrations/`, applied at startup). **Every Arena backend change goes there**: new routes, game engines (`backend/src/valley/`), room/socket behaviour, results, schema. Game data the server embeds lives in `backend/data/` and must stay byte-identical to its `games/` copy (`tests/test_game_data_sync.py`). The local HQ server is Rust too: `dashboard-rs/` (`claudehq`, the HQ app on your machine).
+- Before a PR: `ops/release.sh check` (repo tests, then `cargo test` + clippy in `backend/` and `dashboard-rs/`); for UI changes also `python3 tools/ui_smoke.py`. CI runs the same plus the deploy image build.
+- Deploy: `ops/release.sh deploy` on the Arena host (waits for CI, builds `backend/`'s image, health-checks, rolls back on failure).
 
 ## House style (match it, don't "modernize")
 - `var`, function-scoped. Defensive guards on every helper (`cr = cr || {}`, `|0`, `Math.max/Math.min`, `!=null ? x : fallback`).

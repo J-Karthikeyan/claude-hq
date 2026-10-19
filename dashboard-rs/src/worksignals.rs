@@ -390,7 +390,7 @@ mod tests {
     #[test]
     fn helpers() {
         assert!(is_test_command("FOO=1 npm test"));
-        assert!(is_test_command("cd backend-rs && cargo test && cargo clippy"));
+        assert!(is_test_command("cd backend && cargo test && cargo clippy"));
         assert!(is_test_command("python3 -m unittest discover -s tests"));
         assert!(!is_test_command("grep pytest setup.cfg"));
         assert!(!is_test_command(""));

@@ -12,7 +12,7 @@
 //     Arena relays only the connection setup, as it does for voice. Any app works: Spotify, Apple Music...
 //   - Visualiser: drawn from real audio (yours when live, the stream when listening live, or the DJ's
 //     16-number spectrum relayed ~10 times a second); otherwise a gentle beat seeded per song.
-// Room messages ({type:"music"}) are documented in backend-rs/src/music.rs.
+// Room messages ({type:"music"}) are documented in backend/src/music.rs.
 var MU = {
   st:null, offset:0, now:null, people:[], peopleAt:0, tuned:false, frame:null, frameV:null, frameReady:false,
   yt:{t:0, state:-1, dur:0, at:0}, durSent:{}, endSent:null, errV:null, volume:80, video:true,

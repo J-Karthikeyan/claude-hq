@@ -1,8 +1,8 @@
 """Mini Golf: the browser and the Arena server must roll every shot identically.
 
-games/golf/courses.json is mirrored byte-for-byte at backend/app/golf_courses.json (the
-server deploys backend/ only); the JS simulation in games/golf.js (GOLF-SIM block) uses
-the same constants as backend/app/golf.py and, when node is available, reproduces every
+games/golf/courses.json is mirrored byte-for-byte at backend/data/golf_courses.json (the
+Arena embeds it at build time); the JS simulation in games/golf.js (GOLF-SIM block), when
+node is available, reproduces every
 golden vector exactly. Stdlib only."""
 import json
 import os
@@ -14,7 +14,6 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GOLF_JS = os.path.join(ROOT, "games", "golf.js")
-GOLF_PY = os.path.join(ROOT, "backend", "app", "golf.py")
 GOLDEN = os.path.join(ROOT, "backend", "tests", "golf_golden.json")
 CONSTS = ("R", "CUP", "VS", "TICK", "VMIN", "VMAX", "DRAG_NUM", "DRAG_DEN", "ROLL", "STOP", "REST_NUM",
           "REST_DEN", "CAPTURE", "SUBSTEP", "MAX_TICKS", "MAX_STROKES", "OOB_PENALTY", "AIM_MAX", "SAND_DRAG",
@@ -47,18 +46,13 @@ def const_value(src, name):
 class GolfSync(unittest.TestCase):
     def test_course_file_is_mirrored_for_the_server(self):
         with open(os.path.join(ROOT, "games", "golf", "courses.json"), "rb") as a, \
-                open(os.path.join(ROOT, "backend", "app", "golf_courses.json"), "rb") as b:
+                open(os.path.join(ROOT, "backend", "data", "golf_courses.json"), "rb") as b:
             self.assertEqual(a.read(), b.read(), "run python3 tools/golf_walls.py")
 
     def test_course_walls_match_the_models(self):
         out = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "golf_walls.py"), "--check"],
                              capture_output=True, text=True, timeout=120)
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
-
-    def test_constants_match(self):
-        js, py = sim_block(), read(GOLF_PY)
-        for name in CONSTS:
-            self.assertEqual(const_value(js, name), const_value(py, name), name)
 
     def test_courses_reference_known_pieces(self):
         data = json.loads(read(os.path.join(ROOT, "games", "golf", "courses.json")))

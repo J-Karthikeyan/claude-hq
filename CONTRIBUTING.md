@@ -15,7 +15,7 @@ Two files do everything:
 | `dashboard-rs/` | The HQ server (`claudehq`, Rust: axum + tokio). Reads live agents + transcripts, computes cost/creature/season data, serves the JSON API and the page. |
 | `index.html` + `ui/` | The frontend: `index.html` is the markup template, `ui/` holds its CSS and script split by area; the server stitches them into one page (§2). |
 
-Optional, and out of scope for most contributions: `arena.py` (opt-in multiplayer client, also stdlib-only), `backend/` + `backend-rs/` (the Arena server someone self-hosts), and the `*-wizard.sh` / `ops/` deploy tooling.
+Optional, and out of scope for most contributions: `backend/` (the Rust Arena server someone self-hosts), `deploy-vps.sh` and the `ops/` deploy tooling.
 
 **The no-build-step rule is absolute.** The LaunchAgent and `claudehq` serve files *as they are on disk*. There is no bundler, transpiler, minifier, or `node_modules`. This means:
 

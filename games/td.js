@@ -1,7 +1,7 @@
 /* Tower Defense (HQ 2.5): your Pokémon hold the line against twenty waves of bugs.
  *
  * Solo in the Valley (card "td") runs the rules right here; co-op in an Arena room
- * (card "mp-td", up to 4) is refereed by the Rust Arena (backend-rs/src/valley/td.rs),
+ * (card "mp-td", up to 4) is refereed by the Rust Arena (backend/src/valley/td.rs),
  * which sends a full view ('td'), a 5 Hz snapshot ('tsnap'), 'wave' and 'done'.
  *
  * The rules are integer-only and live in the TD-RULES block below, mirrored constant

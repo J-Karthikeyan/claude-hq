@@ -4,7 +4,7 @@
  * the same geometry the Arena referee uses (HQV.fpsShared, the FPS-SHARED block of
  * games/fps.js): a spawn inside a wall or standing on nothing gets a red flag, spawn
  * pairs that can see each other are drawn (amber when closer than 12 m), and the spawn
- * count, the bounds and the size limits are checked as backend-rs/src/fps.rs
+ * count, the bounds and the size limits are checked as backend/src/fps.rs
  * validate_custom checks them.
  *
  * Walk a map alone (fps.js: a walk-through, no drones, no clock), save up to 6 drafts in
@@ -18,7 +18,7 @@
 var HQV = window.HQV; if(!HQV || !HQV.api) return;
 var api = HQV.api, E = HQV.engine || null;
 
-/* ---------- the rules, as backend-rs/src/fps.rs checks them ---------- */
+/* ---------- the rules, as backend/src/fps.rs checks them ---------- */
 var MAX_BOXES = 96, MIN_SPAWNS = 8, MAX_SPAWNS = 16, MAX_PICKUPS = 16, COORD_MAX = 200;
 var MAX_DATA = 12*1024, DRAFT_MAX = 8*1024, DRAFTS = 6, NAME_MAX = 32, LOS_WARN = 12, SNAP = 0.5;
 var TOP = 12, CANVAS = 640;

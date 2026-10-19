@@ -1,7 +1,7 @@
 /* ================= HQ 2.5: prestige ================= */
 // At shown level 50 you can reset the level you SHOW for a prestige star. Only the
 // shown level resets: your XP, level unlocks, boards and HQ floors all stay (the Arena
-// stores an offset, backend-rs/src/prestige.rs). Star 1 grants the Prestige star frame,
+// stores an offset, backend/src/prestige.rs). Star 1 grants the Prestige star frame,
 // star 3 the Rooftop crown (both grant-only, soulbound cosmetics). Your own 3D HQ grows a
 // prestige floor per star (up to 5) and a beacon (games/hqbase.js, opts.prestige).
 // Panels: the Compete view (order 40), prestigeOpen() (a modal), and a ★ strip on every

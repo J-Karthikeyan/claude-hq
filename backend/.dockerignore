@@ -1,0 +1,8 @@
+# Send only what the image compiles. Everything else in this folder (the
+# VPS's .env, release state, sounds/, target/) stays out of the build context.
+*
+!Cargo.toml
+!Cargo.lock
+!src
+!migrations
+!data

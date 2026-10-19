@@ -5,7 +5,7 @@ Reads games/golf/<piece>.glb, keeps the vertical triangles that span the ball's
 height band, projects them onto the ground plane (x, z) as integer segments
 (1 tile = 10000 units, origin = tile centre) and writes them into the "pieces"
 part of games/golf/courses.json, then mirrors the file byte-for-byte to
-backend/app/golf_courses.json (the Arena server deploys backend/ only).
+backend/data/golf_courses.json (the Arena embeds it at build time).
 
     python3 tools/golf_walls.py            # regenerate + mirror
     python3 tools/golf_walls.py --check    # exit 1 if either file is stale
@@ -27,7 +27,7 @@ import sys
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GOLF = os.path.join(HERE, "games", "golf")
 COURSES = os.path.join(GOLF, "courses.json")
-MIRROR = os.path.join(HERE, "backend", "app", "golf_courses.json")
+MIRROR = os.path.join(HERE, "backend", "data", "golf_courses.json")
 
 FLOOR = 0.063          # floor top (tile units)
 BAND_LO = FLOOR + 0.005  # a wall must reach down to here ...

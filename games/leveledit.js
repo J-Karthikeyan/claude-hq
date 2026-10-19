@@ -6,7 +6,7 @@
  * The route is the path the bots and the autopilot follow: Auto-route finds one (a greedy
  * search over the platforms), and you can edit it point by point as walks (w), jumps (j) and
  * double jumps (d). The live check below runs the Arena's own rules with its own constants
- * (backend-rs/src/platformer.rs validate_custom; tests/test_leveledit.py keeps them equal):
+ * (backend/src/platformer.rs validate_custom; tests/test_leveledit.py keeps them equal):
  * a level the check passes is one the server accepts, and one a runner can finish.
  *
  * Test-run it solo and preview it in 3D (both through games/platformer.js's renderer), keep
@@ -21,7 +21,7 @@ var HQV = window.HQV; if(!HQV || !HQV.api) return;
 var api = HQV.api, E = HQV.engine || null;
 
 /* LEVEL-RULES BEGIN */
-// The Arena's custom-level rules (backend-rs/src/platformer.rs, "custom levels"). PL is the
+// The Arena's custom-level rules (backend/src/platformer.rs, "custom levels"). PL is the
 // PLAT-LEVEL block of games/platformer.js (support, inside, inFoot, segDist, compileLevel).
 function levelRules(PL){
   var K = {LIM: 200, MAX_SOLIDS: 64, MAX_COINS: 80, MAX_CPS: 8, MAX_PLAYERS: 8, MAX_ROUTE: 200, MAX_DECO: 64,

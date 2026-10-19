@@ -12,7 +12,7 @@ var api = HQV.api, mk = api.mk, btn = api.btn;
 // The note events other games send through HQV.story.note(ev, n).
 var NOTES = ["td-wave", "td-clear", "bowl-strike", "bowl-game", "make-save", "make-publish", "race-custom"];
 
-// Story tracks and levels (MapDocs). A pure JSON array: backend-rs/src/story_check.rs parses this
+// Story tracks and levels (MapDocs). A pure JSON array: backend/src/story_check.rs parses this
 // block and runs every doc through the Arena's own validators, so keep it plain JSON.
 var STORY_MAPS = /* STORY-MAPS BEGIN */[
  {"kind":"kart","v":1,"name":"Rookie Ring","data":{"tiles":"FSSSRSSRSSSSSSRSSRSS","scenery":"forest","theme":{"sky":"#a8daf2","fog":"#d6edf6","ground":"#7cbf5e"}}},
