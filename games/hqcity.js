@@ -61,7 +61,7 @@ HQV.hqCityLayout = layout;
 // Clear of the tower, both wings and the path to the door; see tests/test_hq3d.py.
 var LOT_EXTRAS = {
   garage: {x: 13.0, z: 6.7, w: 7.0, d: 6.2, h: 3.0},
-  car: {x: 14.5, z: 7.9, yaw: 0, len: 3.6, wid: 1.7},   // forward is +z: nose at the open door
+  car: {x: 14.5, z: 7.8, yaw: 0, len: 3.9, wid: 1.76},  // forward is +z: nose at the open door
   moto: {x: 12.2, z: 8.2, yaw: 0},
   bike: {x: 10.8, z: 8.3, yaw: 0}
 };
@@ -174,8 +174,8 @@ HQV.hqWorlds.city = function(c, w){
     apron.rotation.x = -PI/2; apron.position.set(G.x, 0.03, (G.z + G.d/2 + 11)/2); apron.receiveShadow = true; g.add(apron);
     var cr = Math.cos(L.rot), sr = Math.sin(L.rot);                               // the lot's frame -> the street's
     function street(p){ return {x: L.x + p.x*cr + p.z*sr, z: L.z - p.x*sr + p.z*cr}; }
-    // the car, parked inside, nose out: body in the HQ's accent, roof in its paint
-    var Cm = c.car(col.accent, col.paint); Cm.g.position.set(K.x, 0, K.z); Cm.g.rotation.y = K.yaw; g.add(Cm.g);
+    // the car, parked inside, nose out: its body in the HQ's paint with stripes in its accent
+    var Cm = c.car(col.paint, col.accent); Cm.g.position.set(K.x, 0, K.z); Cm.g.rotation.y = K.yaw; g.add(Cm.g);
     // under the roof the sun never reaches it: the garage lamp lights its paint (no extra light, so a
     // city of garages costs nothing more to draw)
     function lamplit(gr){ gr.traverse(function(o){ var m = o.material; if(m && m.color && m.emissive && !(m.emissiveIntensity > 0.5)){
@@ -184,14 +184,14 @@ HQV.hqWorlds.city = function(c, w){
     var kp = street(K); L.car = {g: Cm.g};
     // (id: the same prop after a rebuild; stay: hq3d.js parks it wherever you get off)
     var uid = "lot:" + L.h.userId + ":";
-    bikes.push({g: Cm.g, x: kp.x, z: kp.z, yaw: K.yaw + L.rot, color: col.accent, roof: col.paint, kind: "car", id: uid + "car", stay: true});
+    bikes.push({g: Cm.g, x: kp.x, z: kp.z, yaw: K.yaw + L.rot, color: col.paint, accent: col.accent, kind: "car", id: uid + "car", stay: true});
     // its motorbike and its bicycle beside the car, in the HQ's accent
-    var Mo = X.moto, Mm = c.moto(col.accent); Mm.g.position.set(Mo.x, 0, Mo.z); Mm.g.rotation.y = Mo.yaw; g.add(Mm.g);
+    var Mo = X.moto, Mm = c.moto(col.accent, col.paint); Mm.g.position.set(Mo.x, 0, Mo.z); Mm.g.rotation.y = Mo.yaw; g.add(Mm.g);
     var mp = street(Mo);
-    lamplit(Mm.g); bikes.push({g: Mm.g, x: mp.x, z: mp.z, yaw: Mo.yaw + L.rot, color: col.accent, kind: "moto", id: uid + "moto", stay: true});
-    var Bm = c.bike(col.accent); Bm.g.position.set(Bk.x, 0, Bk.z); Bm.g.rotation.y = Bk.yaw; g.add(Bm.g);
+    lamplit(Mm.g); bikes.push({g: Mm.g, x: mp.x, z: mp.z, yaw: Mo.yaw + L.rot, color: col.accent, accent: col.paint, kind: "moto", id: uid + "moto", stay: true});
+    var Bm = c.bike(col.accent, col.paint); Bm.g.position.set(Bk.x, 0, Bk.z); Bm.g.rotation.y = Bk.yaw; g.add(Bm.g);
     var bp = street(Bk); lamplit(Bm.g);
-    bikes.push({g: Bm.g, x: bp.x, z: bp.z, yaw: Bk.yaw + L.rot, color: col.accent, id: uid + "bike", stay: true});
+    bikes.push({g: Bm.g, x: bp.x, z: bp.z, yaw: Bk.yaw + L.rot, color: col.accent, accent: col.paint, id: uid + "bike", stay: true});
   }
   // one tab's building (games/hqbase.js): its door opens that tab
   function viewBuilding(L){
