@@ -200,6 +200,7 @@ function build(opts, doc){
   var seed = String(opts.seed != null ? opts.seed : "rally").slice(0, 64);
   var biome = BIOMES.indexOf(opts.biome) >= 0 ? opts.biome : "forest";
   var night = !!opts.night, target = clamp(Math.round(+opts.length || 3000), 2500, 4000);
+  if(doc && doc.data && typeof doc.data.length === "number") target = clamp(Math.round(doc.data.length), 1000, 6000);
   var master = mulberry32(hashStr(seed));
   var roadSeed = Math.floor(master()*4294967296) >>> 0, terrSeed = Math.floor(master()*4294967296) >>> 0,
       decoSeed = Math.floor(master()*4294967296) >>> 0, surfSeed = Math.floor(master()*4294967296) >>> 0;
@@ -494,7 +495,7 @@ function build(opts, doc){
 
   var gd = gates.map(function(g){ return {x: g.x, z: g.z, h: g.h, w: g.w}; });
   var gateS = gd.map(function(g){ return locate(g.x, g.z, null).s; });
-  var outDoc = {kind: "rally", v: 1, name: name.slice(0, 32), data: {seed: seed, biome: biome, night: night, length: target, road: road, gates: gd}};
+  var outDoc = {kind: "rally", v: 1, name: name.slice(0, 40), data: {seed: seed, biome: biome, night: night, length: target, road: road, gates: gd}};
   return {
     seed: seed, biome: biome, night: night, target: target, name: outDoc.name, doc: outDoc,
     pts: pts, gates: gd, start: start, length: finishS, roadLen: roadLen, sections: sections,
@@ -526,33 +527,37 @@ function crossesGate(g, x0, z0, x1, z1){
   return Math.abs(lat) <= (+g.w || 0) ? Math.max(u, 1e-6) : false;
 }
 
-/* ---------- MapDoc validation ---------- */
-var SEED_RE = /^[A-Za-z0-9 _.:-]{1,64}$/;
-function num(v, lim){ v = +v; return isFinite(v) && Math.abs(v) <= lim ? v : null; }
+/* ---------- MapDoc validation (the Arena referee's limits, backend/src/rally.rs) ---------- */
+// seed: 1-64 printable characters; length 1000-6000 m; 50-400 road points [x, z, y] within
+// 5000 m, 2-30 m apart; 5-40 gates, half-width 4-20 m. Coordinates round to 0.1 m, headings
+// to whole degrees, the length to whole metres, as the referee's canonical form does.
+function num(v, lim){ if(typeof v !== "number") return null; return isFinite(v) && Math.abs(v) <= lim ? v : null; }
 function cleanDoc(doc){
-  if(!doc || typeof doc !== "object" || doc.kind !== "rally" || !doc.data || typeof doc.data !== "object") return null;
+  if(!doc || typeof doc !== "object" || doc.kind !== "rally" || +doc.v !== 1 || !doc.data || typeof doc.data !== "object") return null;
   var d = doc.data;
-  if(typeof d.seed !== "string" || !SEED_RE.test(d.seed)) return null;
-  if(BIOMES.indexOf(d.biome) < 0) return null;
-  var len = Math.round(+d.length); if(!(len >= 2500 && len <= 4000)) return null;
-  if(!Array.isArray(d.road) || d.road.length < 20 || d.road.length > 400) return null;
-  if(!Array.isArray(d.gates) || d.gates.length < 2 || d.gates.length > 40) return null;
+  if(typeof d.seed !== "string" || !d.seed.length || d.seed.length > 64 || /[\u0000-\u001f\u007f]/.test(d.seed)) return null;
+  if(BIOMES.indexOf(d.biome) < 0 || typeof d.night !== "boolean") return null;
+  var len = typeof d.length === "number" ? Math.round(d.length) : NaN; if(!(len >= 1000 && len <= 6000)) return null;
+  if(!Array.isArray(d.road) || d.road.length < 50 || d.road.length > 400) return null;
+  if(!Array.isArray(d.gates) || d.gates.length < 5 || d.gates.length > 40) return null;
   var road = [];
   for(var i = 0; i < d.road.length; i++){
-    var p = d.road[i]; if(!Array.isArray(p) || p.length < 2) return null;
-    var x = num(p[0], 5500), z = num(p[1], 5500), y = p.length > 2 ? num(p[2], 2000) : 0;
+    var p = d.road[i]; if(!Array.isArray(p) || p.length !== 3) return null;
+    var x = num(p[0], 5000), z = num(p[1], 5000), y = num(p[2], 5000);
     if(x === null || z === null || y === null) return null;
     road.push([r1(x), r1(z), r1(y)]);
+    if(i > 0){ var gap = Math.sqrt(Math.pow(road[i][0] - road[i-1][0], 2) + Math.pow(road[i][1] - road[i-1][1], 2)); if(gap < 2 || gap > 30) return null; }
   }
   var gates = [];
   for(var j = 0; j < d.gates.length; j++){
     var g = d.gates[j]; if(!g || typeof g !== "object") return null;
-    var gx = num(g.x, 5500), gz = num(g.z, 5500), gh = num(g.h, 720), gw = num(g.w, 60);
-    if(gx === null || gz === null || gh === null || gw === null || gw < 2) return null;
-    gates.push({x: r1(gx), z: r1(gz), h: ((Math.round(gh) % 360) + 360) % 360, w: Math.round(gw)});
+    var gx = num(g.x, 5000), gz = num(g.z, 5000), gh = num(g.h, 1e6), gw = num(g.w, 1e6);
+    if(gx === null || gz === null || gh === null || gw === null) return null;
+    gw = r1(gw); if(gw < 4 || gw > 20) return null;
+    gates.push({x: r1(gx), z: r1(gz), h: ((Math.round(gh) % 360) + 360) % 360, w: gw});
   }
-  var name = String(doc.name || "").replace(/[<>]/g, "").trim().slice(0, 32) || "Rally stage";
-  return {kind: "rally", v: 1, name: name, data: {seed: d.seed, biome: d.biome, night: !!d.night, length: len, road: road, gates: gates}};
+  var name = String(doc.name || "").replace(/[<>]/g, "").trim().slice(0, 40) || "Rally stage";
+  return {kind: "rally", v: 1, name: name, data: {seed: d.seed, biome: d.biome, night: d.night, length: len, road: road, gates: gates}};
 }
 // The stage key the Arena uses ("c-" + 12 hex) is the server's; locally a doc gets an
 // "x-" id from its content for the solo bests and ghosts.

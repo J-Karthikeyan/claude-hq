@@ -362,17 +362,25 @@ function makeGame(host, opts){
         standDirty = true;
         return;
       case "rally": {
+        // A stage. It runs only if a green light follows ("go": a start, or a rejoin mid-stage);
+        // when results follow instead ("done"), it was over before we came.
         var doc = S.cleanDoc(m.stage); if(!doc){ api.toast("The Arena sent a stage this client can't read"); return; }
-        V.mode = "mp"; resetRun();
-        V.key = m.key; rememberKey(m.key, m.name || doc.name);
-        V.info = {name: m.name || doc.name, seed: doc.data.seed, biome: doc.data.biome, night: doc.data.night, length: doc.data.length};
-        V.roomEvent = m.event && typeof m.event === "object" ? {index: m.event.index|0, count: m.event.count|0} : null;
-        V.stage = buildStageFor(V.info, doc);
-        V.greenLocal = null; V.goAt = null; V.offset = null;
-        beginStage();
+        if(m.key) rememberKey(m.key, m.name || doc.name);
+        V.roomStage = {key: m.key, name: m.name || doc.name, gates: m.gates};
+        V.pendingRally = {doc: doc, m: m};
         return;
       }
       case "go": {
+        if(V.pendingRally){
+          var pr2 = V.pendingRally, d2 = pr2.doc; V.pendingRally = null;
+          V.mode = "mp"; resetRun();
+          V.key = pr2.m.key;
+          V.info = {name: pr2.m.name || d2.name, seed: d2.data.seed, biome: d2.data.biome, night: d2.data.night, length: d2.data.length};
+          V.roomEvent = pr2.m.event && typeof pr2.m.event === "object" ? {index: pr2.m.event.index|0, count: pr2.m.event.count|0} : null;
+          V.stage = buildStageFor(V.info, d2);
+          V.greenLocal = null; V.goAt = null; V.offset = null; V.goServer = 0;
+          beginStage();
+        }
         V.goServer = +m.at || 0;
         var cd = clamp(+m.countdown || 3, 0, 10);
         // until a snap tells us the Arena's clock, assume the start was just sent
@@ -403,6 +411,8 @@ function makeGame(host, opts){
         if(V.leaderAt[gi] == null || ms < V.leaderAt[gi]) V.leaderAt[gi] = ms;
         if(uid === me){
           V.splits[gi] = ms;
+          // the Arena's word is final: after a reconnect it may be ahead of what we saw
+          if(V.stage && gi + 1 > V.gate && gi < V.stage.gates.length - 1){ var gg = V.stage.gates[gi]; V.gate = gi + 1; V.lastGatePos = {x: gg.x, z: gg.z, h: gg.h}; }
           if(V.flash && V.flash.gate === gi) showSplit(gi, ms, true);
         }
         standDirty = true;
@@ -422,6 +432,7 @@ function makeGame(host, opts){
         return;
       }
       case "done": {
+        V.pendingRally = null;
         V.results = {rows: Array.isArray(m.results) ? m.results : [], key: m.key, name: m.name, event: m.event || null};
         if(V.phase !== "menu") showResults();
         else renderMenu();
