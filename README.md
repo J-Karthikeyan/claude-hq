@@ -342,8 +342,13 @@ and feature guide.
   keeps the old server running and says what to run. A Rust HQ built before this needs **one** manual
   rebuild (`cargo build --release --manifest-path dashboard-rs/Cargo.toml`, then restart HQ); the
   dialog now detects that case (and a Python HQ that was not restarted after a pull) and shows the
-  exact command to copy. Still Python-only for now: the Overflow Vial, archived (prompt-less) cards
-  and the Arena City skate board.
+  exact command to copy. The Rust HQ now matches the Python one feature for feature (Overflow Vial,
+  archived prompt-less cards, error recovery, the Arena City skate board, Strikezone assets): every
+  route is the same and `dashboard-rs/tools/parity.py --frozen-home` finds 194 of 195 checks identical
+  (the odd one: a malformed Content-Length gets an empty 400). To switch:
+  `cargo build --release --locked --manifest-path dashboard-rs/Cargo.toml`, then
+  `dashboard-rs/target/release/claudehq --install` (back to Python: `python3 dashboard.py --install`);
+  both read the same data files.
 - **2.6.1 — Reopen the HQ Notch dialog.** Closed the "New: HQ Notch" dialog without reading it? Open it
   again any time from **Settings > HQ Notch** or the command palette (Cmd-K, "HQ Notch"). When the notch
   is already installed it says so and offers **Reinstall**. Closing a reopened dialog keeps your earlier choice.
