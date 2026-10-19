@@ -9,12 +9,12 @@
 "use strict";
 var HQV = window.HQV; if(!HQV) return;
 var api = HQV.api;
-var NAMES = {pond:"Fishing Pond", race:"Puzzle Race", duel:"Creature Duel", mines:"Co-op Mines", farm:"Shared Farm", golf:"Mini Golf", kart:"Kart Racing", plat:"Platformer Rush", fps:"Blaster Arena", strike:"Strikezone", type:"Code Typing Race", td:"Tower Defense", bowl:"Bowling"};
+var NAMES = {pond:"Fishing Pond", race:"Puzzle Race", duel:"Creature Duel", mines:"Co-op Mines", farm:"Shared Farm", golf:"Mini Golf", kart:"Kart Racing", rally:"Valley Rally", plat:"Platformer Rush", fps:"Blaster Arena", strike:"Strikezone", type:"Code Typing Race", td:"Tower Defense", bowl:"Bowling"};
 var LIVE = {};          // g -> {lobby:[...], ...game state from the server}
 // Protocol versions this client speaks, per game: [oldest, newest]. Must cover the
 // server's PROTOCOL table (backend/app/valley.py, backend/src/protocol.rs). A server
 // below the range is an Arena to update; above it, Claude HQ is the one to update.
-var CLIENT_PROTO = {pond:[1,1], race:[1,1], duel:[1,1], mines:[1,1], farm:[1,1], golf:[1,1], kart:[1,2], plat:[1,1], fps:[1,1], strike:[1,4], hq:[1,1], type:[1,1], td:[1,1], bowl:[1,1]};
+var CLIENT_PROTO = {pond:[1,1], race:[1,1], duel:[1,1], mines:[1,1], farm:[1,1], golf:[1,1], kart:[1,2], rally:[1,1], plat:[1,1], fps:[1,1], strike:[1,4], hq:[1,1], type:[1,1], td:[1,1], bowl:[1,1]};
 // null = fine to play; else {who:"arena"|"hq", text} explaining why not.
 function protoCheck(g){
   var info = A().arena;
@@ -208,7 +208,8 @@ function invitePicker(ctx){
       if(!/^[A-Za-z0-9_-]{1,39}$/.test(raw)){ if(fromButton) api.toast("Type a name or @handle"); inp.focus(); return; }
       c = {kind: "nudge", handle: raw, name: raw};
     }
-    if(c.kind === "invite"){ ctx.pendingInvite = {handle: c.handle, name: c.name}; send(ctx.g, "invite", {to: c.userId}); }
+    // Valley Rally's referee names the invitee "uid"; the older games say "to"
+    if(c.kind === "invite"){ ctx.pendingInvite = {handle: c.handle, name: c.name}; send(ctx.g, "invite", ctx.g === "rally" ? {uid: c.userId} : {to: c.userId}); }
     else nudge(c.handle, ctx.g);
     inp.value = ""; close(); inp.focus();
   }

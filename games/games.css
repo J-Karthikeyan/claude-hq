@@ -669,3 +669,54 @@ html.hq-calm .bowl-flash.on{opacity:1}
 .vg-strike-final{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;font:800 18px var(--mono);margin:8px 0}
 .vg-strike-final b{font:inherit}
 .vg-strike-win{font-weight:800}
+/* ---- Valley Rally (games/rally.js) ---- */
+.vg-rally-canvas{cursor:default;filter:saturate(1.12) contrast(1.05)}
+.vg-rally-top{position:absolute;left:50%;top:0;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:4px;pointer-events:none}
+/* the timer: a square slab with an accent top edge, the time big, the gate count under it */
+.vg-rally-slab{display:flex;flex-direction:column;align-items:center;min-width:188px;padding:2px 18px 5px;background:color-mix(in srgb,var(--panel) 92%,transparent);
+  border-top:3px solid var(--brand);box-shadow:var(--shadow)}
+.vg-rally-time{font:800 32px/1.1 var(--font);color:var(--ink);font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.vg-rally-gate{font:800 12px var(--font);color:var(--ink);letter-spacing:.04em;text-transform:uppercase;opacity:.85}
+.vg-rally-strip{width:150px;height:84px}
+.vg-rally-split{display:flex;align-items:baseline;gap:8px;padding:2px 10px;background:var(--brand);color:var(--on-brand);
+  font:800 14px var(--font);font-variant-numeric:tabular-nums;box-shadow:var(--shadow)}
+.vg-rally-split b{font-size:12px;letter-spacing:.04em;color:inherit}
+.vg-rally-split i{font-style:normal;font-weight:800;padding:0 6px;background:var(--panel)}
+.vg-rally-split i.good,.vg-rally-splits td.good,.vg-rally-good{color:var(--good)}
+.vg-rally-split i.bad,.vg-rally-splits td.bad{color:var(--need)}
+.vg-rally-bl{position:absolute;left:0;bottom:8px;display:flex;flex-direction:column;gap:4px;padding:6px 12px 6px 10px;
+  background:color-mix(in srgb,var(--panel) 90%,transparent);border-top:3px solid var(--brand);pointer-events:none}
+.vg-rally-dist{font:italic 900 18px var(--font);color:var(--ink);font-variant-numeric:tabular-nums}
+.vg-rally-bars{width:176px;height:50px}
+.vg-rally-gauge{position:absolute;right:0;bottom:6px;width:230px;height:218px;pointer-events:none}
+.vg-rally-stand{position:absolute;left:8px;top:8px;margin:0;padding:6px 10px 6px 10px;list-style:none;display:flex;flex-direction:column;gap:1px;
+  max-width:34%;border-radius:10px;background:color-mix(in srgb,var(--panel) 86%,transparent);border:1px solid var(--line);font:600 12px var(--mono);
+  font-variant-numeric:tabular-nums;pointer-events:none}
+.vg-rally-stand:empty{display:none}
+.vg-rally-stand li{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vg-rally-stand li.me{font-weight:800;color:var(--ink)}
+.vg-rally-cd{top:40%}
+.vg-rally-card{min-width:min(360px,calc(100% - 24px))}
+.vg-rally-big{font:800 30px var(--mono);font-variant-numeric:tabular-nums;color:var(--ink)}
+.vg-rally-splitwrap{max-height:190px;overflow:auto}
+.vg-rally-pause{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--bg) 55%,transparent)}
+.vg-rally-pausebox{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:var(--radius);background:var(--panel);border:1px solid var(--brand);
+  box-shadow:var(--shadow-lg);max-width:calc(100% - 24px);max-height:calc(100% - 24px);overflow:auto}
+.vg-rally-settings{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--panel2)}
+.vg-rally-vol input{accent-color:var(--brand)}
+.vg-rally-cars .vg-golf-char{flex-direction:row;gap:8px;align-items:center;padding:8px 12px}
+.vg-rally-carname{display:flex;flex-direction:column;align-items:flex-start;text-align:left}
+.vg-rally-carname small{font-size:11px;color:var(--muted)}
+.vg-golf-char.on .vg-rally-carname small{color:inherit;opacity:.85}
+.vg-rally-random{flex-wrap:wrap;gap:6px}
+.vg-rally-random .vg-input{width:160px}
+.vg-rally-event{display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:var(--radius-sm);border:1px dashed var(--line)}
+.vg-rally-event .hbtn{align-self:flex-start}
+@media (max-width:640px){
+  .vg-rally-gauge{transform:scale(.7);transform-origin:right bottom}
+  .vg-rally-bl{transform:scale(.8);transform-origin:left bottom}
+  .vg-rally-strip{width:120px;height:68px}
+  .vg-rally-time{font-size:22px}
+  .vg-rally-slab{min-width:140px}
+  .vg-rally-stand{display:none}
+}
