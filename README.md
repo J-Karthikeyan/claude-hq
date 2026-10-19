@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 2.8.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 2.8.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -330,6 +330,16 @@ and feature guide.
 
 ## Changelog
 
+- **2.8.1 — Arena City driving.** New, detailed car (a hatchback with wheel arches, alloys, a
+  glass cabin with seats, dashboard and a turning wheel, brake lights), motorbike (a small street
+  bike) and bicycle (spoked wheels, turning cranks), in scale with your character. Riders sit on the
+  seat with hands on the bars or wheel and feet on the pegs or pedals, and lean into turns. Hold
+  Shift (gamepad B) and steer to powerslide the car (a smaller slide on the motorbike), with skid
+  marks and tyre smoke. A small driving HUD (speed and rev dials with the gear, a Powerslide chip, the
+  keys) shows while you ride. Fixes: the wrong vehicle after the street rebuilt, a 50 m teleport while
+  sitting in the car, other players seated in the bicycle pose, the car clipping through walls and
+  being entered through the garage wall, a parked car jumping back to its garage, the garage roof
+  hiding you, and character sizes that varied by load order.
 - **2.8.0 — Valley Rally.** Point-to-point off-road stages in a cel-shaded forest, dry hills and snow,
   by day or night: 20 gates per stage with split times against your best, a road-ahead map, and a
   rally HUD (segmented tachometer, gear, big speed, handbrake / clutch / TC lamps). A detailed car
