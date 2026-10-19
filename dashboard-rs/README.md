@@ -3,9 +3,12 @@
 A Rust port of the local Claude HQ server: `dashboard.py` and everything it
 imports (`arena.py`, `music.py`, `worksignals.py`, `ext_skills.py`,
 `ext_loot.py`, `ext_prestige.py`, `ext_maps.py`, `ext_cups.py`,
-`ext_boss.py`). Same routes, same gates, same JSON, same state files, same
+`ext_boss.py`, `ext_notch.py`), including the evolution picks
+(`POST /api/evo-choice`, `evo-choices.json`, `creature.evo` in
+`/api/sessions`). Same routes, same gates, same JSON, same state files, same
 Arena privacy boundary. The frontend (`index.html`, `ui/`, `games/`) is
-unchanged and served from the repo as before.
+unchanged and served from the repo as before. Not ported yet: see
+[Known gaps](#known-gaps-and-differences).
 
 It runs **alongside** the Python server, the same way `backend-rs/` did for the
 Arena: the Python files are untouched, both read and write the same state
@@ -39,7 +42,7 @@ dashboard-rs/target/release/claudehq --install
 
 ```bash
 cd dashboard-rs
-~/.cargo/bin/cargo test                                  # 124 tests
+~/.cargo/bin/cargo test                                  # 146 tests
 ~/.cargo/bin/cargo clippy --all-targets -- -D warnings   # clean
 ```
 
@@ -49,9 +52,12 @@ vectors, needs-you detection, slim cards, the payload memo, flexible streaks,
 Cursor transcripts and titles, work-signal classification, music parsing and
 the share loop, the Arena wire allowlists (pantry, cali, rooms, portrait,
 gifts, nudges), every ext proxy (skills, loot, prestige, maps, cups, boss),
-the pantry eat flow, close/resume guards and the self-update (on throwaway git
-repos). `tests/http.rs` checks the gates on a real 127.0.0.1 server, and
-`tests/scanner.rs` the transcript pass, busy spans and work signals.
+the pantry eat flow, close/resume guards, evolution picks (`test_evo_choice.py`),
+HQ Notch status and install (`test_notch_invite.py`, with a stand-in installer)
+and the self-update, including the rebuild (on throwaway git repos with a fake
+`cargo`). `tests/http.rs` checks the gates on a real 127.0.0.1 server (also for
+`/api/evo-choice` and `/api/notch/install`), and `tests/scanner.rs` the
+transcript pass, busy spans and work signals.
 
 ## Parity
 
@@ -59,10 +65,13 @@ repos). `tests/http.rs` checks the gates on a real 127.0.0.1 server, and
 ports (never 8765) against **one** temp copy of the Claude HQ folder: code
 symlinked, state files copied, no `arena-link.json`, the Arena URL blanked and
 work signals off, so nothing can pair or leave the machine. It GETs every
-route on both (107 GET/HEAD checks), diffs status, headers and normalized
-JSON, then replays 50 safe POSTs on each (resetting the temp state between
-servers), diffs the state files they leave, and runs 9 checks on the POST
-gates (CSRF, Origin, Host, body caps, bad bodies).
+route on both (110 GET/HEAD checks, including `/api/notch/status` and
+`/api/sessions` again after seeding an evo pick for every session that has a
+choice), diffs status, headers and normalized JSON, then replays 59 safe POSTs
+on each (9 of them `/api/evo-choice`; resetting the temp state between
+servers), diffs the state files they leave, and runs 11 checks on the POST
+gates (CSRF, Origin, Host, body caps, bad bodies; `/api/notch/install` only
+without a token or from a foreign Origin, so the real installer never runs).
 
 ```bash
 # frozen: copies ~/.claude/projects + ~/.cursor/projects into a temp HOME and stubs
@@ -84,6 +93,13 @@ clock-driven value (fatigue, sparks, ages) included. The one remaining diff is
 the first known gap below. In a live run, the only extra differences come from
 sessions being written between the two servers' reads.
 
+**2026-10-19 (frozen, against `dashboard.py` 2.6.1):** 180 checks, 174
+identical. Every notch and evo check matches (status, 9 evo POSTs with their
+`evo-choices.json` bytes, `creature.evo` on all 105 shared cards). The 6
+differences are the bad `Content-Length` gap and five views of the
+not-yet-ported Python 2.5.2 payload changes listed under Known gaps
+(`/api/sessions` twice, the stream frame, `export.json`, `export.csv`).
+
 Rough numbers on the same frozen data (M-series Mac, release build):
 
 | | Python | Rust |
@@ -103,9 +119,33 @@ Rough numbers on the same frozen data (M-series Mac, release build):
 - `/api/server-stats`: `"python"` reads `n/a (Rust 2.5.0)`, there is an extra
   `"impl": "rust"`, and `threads` is the OS thread count (`ps -M`).
 - HTTP/1.1 with keep-alive instead of Python's HTTP/1.0; `Server: ClaudeHQ/2.5.0 Rust`.
+- **Not ported yet** (Python changes after the port): the Overflow Vial
+  (`vial.json`, `payload.vial`, each card's `vialPoured`, `POST /api/vial/spend`),
+  the other 2.5.2 payload changes (archived cards with no prompts are listed,
+  an error clears once a later reply succeeds), `ext_skate.py`
+  (`GET /api/arena/skate`, `POST /api/arena/skate/combo`), and `APP_VERSION`
+  is still 2.5.0. Those routes 404 here.
 - `POST /api/update` "stale" compares the running **binary's** mtime (Python
-  watches `dashboard.py`); the restart re-execs the binary, or kickstarts
-  launchd when launchd started it.
+  watches `dashboard.py`), and is also true when this checkout's Rust sources
+  (`Cargo.toml`, `Cargo.lock`, `src/`, `assets/`) are newer than the binary it
+  runs. The restart re-execs the binary, or kickstarts launchd when launchd
+  started it.
+- **The self-update rebuilds itself.** When a pull changes anything under
+  `dashboard-rs/` (or the build is already older than its sources), the update
+  runs `cargo build [--release] --locked --manifest-path dashboard-rs/Cargo.toml`
+  (cargo from PATH, else `~/.cargo/bin/cargo`; up to 900 s; the profile of the
+  running binary) **before** restarting, so the restart runs the new code. If
+  cargo is missing or the build fails, it does not restart: the pulled code
+  stays, the answer is a `409` whose error ends with the command to run by
+  hand, and "stale" stays on so the Update button offers the rebuild again.
+  It only rebuilds `dashboard-rs/target/{release,debug}/claudehq` of this very
+  checkout; a `claudehq` copied elsewhere gets the `409` instead.
+- `POST /api/notch/install` runs `/usr/bin/python3 notch/tools/install.py`
+  (cwd = the HQ folder), or `python3` from PATH when `/usr/bin/python3` is
+  missing; Python uses its own `sys.executable`. The install already requires
+  the Command Line Tools (for `swift`), which provide `/usr/bin/python3`, and
+  the installer pins its hooks to that interpreter anyway. The job log is
+  decoded as UTF-8 (lossy) where Python would fail on undecodable output.
 - Arena HTTPS uses rustls with the Mozilla root set, not the macOS keychain:
   an Arena behind a private CA won't verify.
 - macOS asks once, separately, before `claudehq` may script Spotify / Music /
@@ -130,6 +170,8 @@ Rough numbers on the same frozen data (M-series Mac, release build):
 | `src/fatigue.rs`, `src/creature.rs`, `src/cost.rs` | fatigue walk, creatures/levels, prices |
 | `src/handlers.rs` | pantry bodies + eat flow, quest rewards, cali orders, room bodies, soundboard |
 | `src/arena.rs`, `src/ext.rs`, `src/music.rs`, `src/worksignals.rs` | `arena.py`, `ext_*.py`, `music.py`, `worksignals.py` |
+| `src/notch.rs` | `ext_notch.py`: HQ Notch status + one-click install |
+| `src/evo.rs` | evolution picks: `evo_tables`, `clean_evo_choice`, `load` / `save_evo_choice`, `merge_evo_choices` |
 | `src/server.rs` | `Handler`: routes, gates, static files, `assemble_index`, SSE |
 | `src/actions.rs` | resume / reveal / close, self-update, launchd, notifications |
 | `src/py.rs`, `src/pyjson.rs`, `src/difflib.rs`, `src/state.rs` | Python semantics the port relies on (str methods, `round`, `isoformat`, `json.dumps` byte format, `SequenceMatcher`, atomic writes) |

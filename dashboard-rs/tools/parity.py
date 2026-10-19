@@ -19,6 +19,7 @@ query and /api/music/oembed with a real id (YouTube), and POST /api/update
 """
 import argparse
 import base64
+import hashlib
 import http.client
 import json
 import os
@@ -31,15 +32,17 @@ import tempfile
 import threading
 import time
 import urllib.parse
+import uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CRATE = os.path.dirname(HERE)
 REPO = os.path.dirname(CRATE)
 
 CODE_FILES = ("dashboard.py", "arena.py", "music.py", "worksignals.py", "ext_boss.py", "ext_cups.py",
-              "ext_loot.py", "ext_maps.py", "ext_prestige.py", "ext_skills.py", "index.html")
-CODE_DIRS = ("ui", "games")
-STATE_FILES = ("config.json", "sessions-meta.json", "meals.json", "games-save.json", ".dex-seed")
+              "ext_loot.py", "ext_maps.py", "ext_prestige.py", "ext_skills.py", "ext_notch.py", "index.html")
+# notch/ so /api/notch/status reports the installer as available (the install itself is never run here).
+CODE_DIRS = ("ui", "games", "notch")
+STATE_FILES = ("config.json", "sessions-meta.json", "meals.json", "games-save.json", ".dex-seed", "evo-choices.json")
 
 # Values that legitimately differ between two processes or two instants.
 VOLATILE_KEYS = {"updated", "generated", "boot", "pid", "uptimeSecs", "cpuPct", "rssMb", "threads",
@@ -458,7 +461,7 @@ def run_gets(root):
               "/api/session/00000000-0000-4000-8000-000000000000", "/api/project?folder=../etc",
               "/api/search?q=", "/api/search?q=%20%20", "/api/digest?date=2026-09-01",
               "/api/digest?date=2026-10-10&days=7", "/api/digest?date=bad&days=x", "/api/history",
-              "/api/pokedex", "/api/insights"]
+              "/api/pokedex", "/api/insights", "/api/notch/status"]
     for p in simple:
         compare_json("GET " + p, *both(get, p))
     compare_json("GET /api/server-stats (shape)", *both(get, "/api/server-stats"),
@@ -482,6 +485,74 @@ def run_gets(root):
     strip_age = lambda b: b"\r\n".join(re.sub(rb"^([^,]*,(?:\"[^\"]*\"|[^,]*),[^,]*,[^,]*,[^,]*,)[^,]*", rb"\1AGE", ln)
                                        for ln in b.split(b"\r\n"))
     compare_raw("GET /api/export.csv (ages masked)", (rp[0], rp[1], strip_age(rp[2])), (rr[0], rr[1], strip_age(rr[2])))
+
+    # Evolution picks ride in /api/sessions as creature.evo: give every session
+    # with a choice to make one (plus some junk the servers must drop), then re-read.
+    picks, n = seed_evo_picks(root, [s["sessionId"] for s in sessions])
+    time.sleep(1.6)                                   # past both payload memos
+    rp, rr = both(get, "/api/sessions")
+    compare_json("GET /api/sessions with %d evo picks" % n, rp, rr, drop_clock=True)
+    # Per session id, so a difference in which cards are listed does not hide (or fake) one here.
+    evo_of = lambda raw: {s.get("sessionId"): (s.get("creature") or {}).get("evo")
+                          for s in json.loads(raw).get("sessions", []) if isinstance(s, dict)}
+    ep, er = evo_of(rp[2]), evo_of(rr[2])
+    shared = sorted(set(ep) & set(er))
+    bad = ["%s: py=%s rs=%s" % (sid[:8], ep[sid], er[sid]) for sid in shared if ep[sid] != er[sid]]
+    record("  creature.evo per session (%d cards on both, %d with a pick)"
+           % (len(shared), sum(1 for sid in shared if er[sid])), not bad, bad)
+    os.remove(picks)
+
+
+def session_species(sid):
+    return int(hashlib.sha256(sid.encode("utf-8")).hexdigest(), 16) % 48
+
+
+def sid_for(species):
+    """A session id whose Pokemon is this species (as tests/test_evo_choice.py)."""
+    i = 0
+    while True:
+        sid = str(uuid.UUID(int=i * 2654435761 % (1 << 128)))
+        if session_species(sid) == species:
+            return sid
+        i += 1
+
+
+def evo_tables():
+    """dashboard.evo_tables(), re-read here so the tool does not import dashboard.py."""
+    with open(os.path.join(REPO, "ui", "app", "06-trainer-packs.js"), encoding="utf-8") as f:
+        js = f.read()
+
+    def var(name):
+        m = re.search(r"var %s=(.*?);\n" % name, js, re.S)
+        return m.group(1) if m else ""
+    finals = {i: {int(line[-1])} for i, line in enumerate(json.loads(var("POKE_EVO") or "[]")) if line}
+    for idx, body in re.findall(r"(\d+):\[(\{.*?\})\]", var("POKE_BRANCH")):
+        finals.setdefault(int(idx), set()).update(int(d) for d in re.findall(r"dex:(\d+)", body))
+    megas = {int(k): sorted(re.findall(r'slug:"([a-z0-9-]+)"', b)) for k, b in re.findall(r"(\d+):\[(\{name:.*?\})\]", var("MEGA_FORMS"))}
+    return finals, megas
+
+
+def seed_evo_picks(root, sids):
+    finals, megas = evo_tables()
+    data, n = {"not-a-uuid": {"branchDex": 1}}, 0
+    for sid in sids:
+        allowed = sorted(finals.get(session_species(sid), ()))
+        pick = {}
+        if len(allowed) > 1:
+            pick["branchDex"] = allowed[-1]
+        pool = [m for d in ([allowed[-1]] if pick else allowed) for m in megas.get(d, [])]
+        if pool:
+            pick["megaSlug"] = pool[0]
+        if pick:
+            pick["junk"] = 1
+            data[sid] = pick
+            n += 1
+        else:
+            data[sid] = {"branchDex": 25, "megaSlug": "nope"}   # nothing valid: dropped
+    path = os.path.join(root, "evo-choices.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    return path, n
 
 
 def post(port, path, body, token=True, headers=None):
@@ -552,6 +623,18 @@ def run_posts(root):
         ("/api/arena/sounds", {"name": "x.exe", "data": wav}),
         ("/api/nope", {}),
     ]
+    eevee, zard = sid_for(4), sid_for(1)
+    cases += [
+        ("/api/evo-choice", {"sessionId": eevee, "branchDex": 470}),
+        ("/api/evo-choice", {"sessionId": eevee, "branchDex": 470, "megaSlug": None}),
+        ("/api/evo-choice", {"sessionId": eevee, "branchDex": None}),
+        ("/api/evo-choice", {"sessionId": eevee, "branchDex": 6}),
+        ("/api/evo-choice", {"sessionId": eevee, "branchDex": True}),
+        ("/api/evo-choice", {"sessionId": zard, "megaSlug": "charizard-megay"}),
+        ("/api/evo-choice", {"sessionId": zard, "megaSlug": "<script>"}),
+        ("/api/evo-choice", {"sessionId": "../../etc", "branchDex": 470}),
+        ("/api/evo-choice", {"branchDex": 470}),
+    ]
     for path, body in cases:
         restore(root, base)
         rp = post(PY, path, body)
@@ -581,6 +664,9 @@ def run_posts(root):
     restore(root, base)
     # The gates.
     compare_json("POST without the CSRF token", *both(lambda p: post(p, "/api/config", {}, token=False)))
+    # Never with a token: that would really build and install HQ Notch.
+    compare_json("POST /api/notch/install without the CSRF token", *both(lambda p: post(p, "/api/notch/install", {}, token=False)))
+    compare_json("POST /api/notch/install from a foreign Origin", *both(lambda p: post(p, "/api/notch/install", {}, headers={"Origin": "https://evil.example"})))
     compare_json("POST from a foreign Origin", *both(lambda p: post(p, "/api/config", {}, headers={"Origin": "https://evil.example"})))
     compare_json("POST with Sec-Fetch-Site: cross-site", *both(lambda p: post(p, "/api/config", {}, headers={"Sec-Fetch-Site": "cross-site"})))
     compare_json("POST with a foreign Host", *both(lambda p: post(p, "/api/config", {}, headers={"Host": "evil.example"})))

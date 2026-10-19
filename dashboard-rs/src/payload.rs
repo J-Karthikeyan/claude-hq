@@ -698,6 +698,7 @@ impl App {
         let season = self.compute_season();
         let feed = self.build_feed(&sessions, 25);
         let meta = self.load_meta();
+        crate::evo::merge_evo_choices(&mut sessions, &self.load_evo_choices());
         let stuck_secs = config.get("stuckMinutes").and_then(py::py_int).unwrap_or(15) * 60;
         let mut stuck_ids: Vec<Value> = Vec::new();
         for s in sessions.iter_mut() {
