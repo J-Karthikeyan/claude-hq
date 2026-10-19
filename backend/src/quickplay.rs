@@ -62,7 +62,7 @@ pub const ROOM_TTL: f64 = 3.0 * 3600.0;
 /// Pydantic's `Field(max_length=8)` on `game`: a *string length* cap, not an
 /// allowlist. "chess" passes this and fails the allowlist; "platformer" 422s.
 const MAX_GAME_LEN: usize = 8;
-/// The five queues. A closed set, so an array beats a map: `_queues[g]` can
+/// The queues (the five Python games plus Valley Rally). A closed set, so an array beats a map: `_queues[g]` can
 /// never be a missing key and the GAMES iteration order is a compile-time fact.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Game {
@@ -71,11 +71,12 @@ pub enum Game {
     Fps,
     Golf,
     Type,
+    Rally,
 }
 
 /// Iteration order is load-bearing: `status` scans the queues in this order, so
 /// even a corrupted double-entry resolves the same way every time.
-pub const GAMES: [Game; 5] = [Game::Kart, Game::Plat, Game::Fps, Game::Golf, Game::Type];
+pub const GAMES: [Game; 6] = [Game::Kart, Game::Plat, Game::Fps, Game::Golf, Game::Type, Game::Rally];
 
 /// What Quick Play may offer: the catalog, minus whatever this Arena's engine
 /// cannot actually referee. Matching two people into a room where no game ever
@@ -117,6 +118,7 @@ impl Game {
             "fps" => Some(Game::Fps),
             "golf" => Some(Game::Golf),
             "type" => Some(Game::Type),
+            "rally" => Some(Game::Rally),
             _ => None,
         }
     }
@@ -129,6 +131,7 @@ impl Game {
             Game::Fps => "fps",
             Game::Golf => "golf",
             Game::Type => "type",
+            Game::Rally => "rally",
         }
     }
 
@@ -141,6 +144,7 @@ impl Game {
             Game::Fps => "Blaster",
             Game::Golf => "Golf",
             Game::Type => "Code Typing Race",
+            Game::Rally => "Valley Rally",
         }
     }
 
@@ -153,6 +157,7 @@ impl Game {
             Game::Fps => "Blaster Arena",
             Game::Golf => "Mini Golf",
             Game::Type => "Code Typing Race",
+            Game::Rally => "Valley Rally",
         }
     }
 }
@@ -189,7 +194,7 @@ struct Inner {
     /// matchmaker sorts by `at` and Python's `sorted` is stable over a dict's
     /// *insertion-ordered* items: with a stepped clock a whole burst of joiners
     /// shares one `at`, and the tie has to break the way they joined.
-    queues: [Vec<(String, Entry)>; 5],
+    queues: [Vec<(String, Entry)>; 6],
     matched: HashMap<String, MatchRec>,
     rooms: HashMap<String, RoomRec>,
 }
@@ -622,10 +627,10 @@ mod tests {
 
     #[test]
     fn quickplay_lists_what_this_arena_runs() {
-        // Over the whole catalog, the Python's literal, byte for byte.
+        // Over the whole catalog: the Python's literal, plus the Rust-only Valley Rally.
         assert_eq!(
             game_list(&GAMES),
-            "Quick Play has Kart, Platformer, Blaster, Golf and Code Typing Race"
+            "Quick Play has Kart, Platformer, Blaster, Golf, Code Typing Race and Valley Rally"
         );
         // And the queue is only open for games the engine can referee, so
         // nobody is matched into a room where nothing starts.

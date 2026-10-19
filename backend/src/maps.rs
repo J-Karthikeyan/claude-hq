@@ -1,9 +1,9 @@
-//! The map gallery (HQ 2.5): kart tracks, platformer levels and blaster maps
+//! The map gallery (HQ 2.5): kart tracks, platformer levels, blaster maps and rally stages
 //! people make in the Valley editors, kept private, shared to a room, or
 //! published to the whole Arena; with likes, reports and a weekly featured pick.
 //!
 //!   GET  /v1/maps?kind&sort=new|top|week&room&mine=1&ckey&cursor&limit  {maps, next, admin}
-//!   GET  /v1/maps/featured                       {week, thisWeek:{kart,plat,fps}, lastWeek:{..}}
+//!   GET  /v1/maps/featured                       {week, thisWeek:{kart,plat,fps,rally}, lastWeek:{..}}
 //!   GET  /v1/maps/:id                            {map: MapCard + data}
 //!   POST /v1/maps        {id?, kind, name, data, scope, roomId?}   create or update (owner)
 //!   POST /v1/maps/:id/like    {on}               {likes, liked}
@@ -42,7 +42,7 @@ use serde_json::{json, Map, Value};
 use sqlx::{Row, Sqlite, SqlitePool};
 use std::collections::HashMap;
 
-pub const KINDS: [&str; 3] = ["kart", "plat", "fps"];
+pub const KINDS: [&str; 4] = ["kart", "plat", "fps", "rally"];
 pub const SCOPES: [&str; 3] = ["private", "room", "public"];
 pub const REASONS: [&str; 4] = ["spam", "offensive", "broken", "other"];
 /// Largest serialized `data` accepted (bytes).
@@ -170,6 +170,7 @@ pub struct Picks {
     pub kart: Option<MapCard>,
     pub plat: Option<MapCard>,
     pub fps: Option<MapCard>,
+    pub rally: Option<MapCard>,
 }
 
 impl Picks {
@@ -177,6 +178,7 @@ impl Picks {
         match kind {
             "kart" => self.kart = c,
             "plat" => self.plat = c,
+            "rally" => self.rally = c,
             _ => self.fps = c,
         }
     }
@@ -225,14 +227,15 @@ fn new_id() -> String {
 
 /// A map name as stored: trimmed, 1-32 printable characters, no markup and no
 /// link. Refused rather than cleaned, so what you typed is what others see.
-pub fn clean_name(raw: &str) -> Result<String, String> {
+/// `max` is MAX_NAME (32) for every kind but rally, whose stages take 40.
+pub fn clean_name_max(raw: &str, max: usize) -> Result<String, String> {
     let s = raw.trim();
     let n = s.chars().count();
     if n == 0 {
         return Err("give your map a name".into());
     }
-    if n > MAX_NAME {
-        return Err("names are at most 32 characters".into());
+    if n > max {
+        return Err(format!("names are at most {max} characters"));
     }
     if s.chars().any(|c| c.is_control() || c == '<' || c == '>') {
         return Err("names can't contain < > or control characters".into());
@@ -251,6 +254,7 @@ pub fn canonical(kind: &str, data: &Value) -> Result<Value, String> {
         "kart" => crate::kart::validate_custom(data),
         "plat" => crate::platformer::validate_custom(data),
         "fps" => crate::fps::validate_custom(data),
+        "rally" => crate::rally::validate_custom(data),
         _ => Err("unknown kind".into()),
     }
 }
@@ -442,7 +446,7 @@ pub fn parse_list_q(q: &HashMap<String, String>) -> Result<ListQ, Refusal> {
     let kind = match get("kind") {
         None => None,
         Some(k) if KINDS.contains(&k) => Some(k.to_string()),
-        Some(_) => return Err(bad("kind must be kart, plat or fps")),
+        Some(_) => return Err(bad("kind must be kart, plat, fps or rally")),
     };
     let sort = match get("sort").unwrap_or("new") {
         s @ ("new" | "top" | "week") => s.to_string(),
@@ -684,9 +688,10 @@ pub fn parse_save(bytes: &[u8]) -> Result<SaveBody, Refusal> {
     };
     let kind = want_str(&o, "kind")?;
     if !KINDS.contains(&kind) {
-        return Err(bad("kind must be kart, plat or fps"));
+        return Err(bad("kind must be kart, plat, fps or rally"));
     }
-    let name = clean_name(want_str(&o, "name")?).map_err(|e| bad(&e))?;
+    let max = if kind == "rally" { crate::rally::MAX_NAME } else { MAX_NAME };
+    let name = clean_name_max(want_str(&o, "name")?, max).map_err(|e| bad(&e))?;
     let scope = want_str(&o, "scope")?;
     if !SCOPES.contains(&scope) {
         return Err(bad("scope must be private, room or public"));

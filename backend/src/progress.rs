@@ -30,7 +30,7 @@ use std::collections::{HashMap, HashSet};
 
 /// Response order for `games`, and the only games a result row may count
 /// toward. A row naming anything else is skipped by the profile walk.
-const GAMES: [&str; 7] = ["kart", "plat", "fps", "golf", "type", "td", "bowl"];
+const GAMES: [&str; 8] = ["kart", "plat", "fps", "golf", "type", "td", "bowl", "rally"];
 /// Boards where a bigger value is better (waves cleared, pins): keep the max,
 /// sort descending. Every other non-fps board keeps the minimum.
 const HIGHER_BETTER: [&str; 2] = ["td", "bowl"];
@@ -280,6 +280,7 @@ struct GamesView {
     #[serde(rename = "type")] typing: Obj,
     td: Obj,
     bowl: Obj,
+    rally: Obj,
 }
 
 #[derive(Debug, Serialize)]
@@ -734,7 +735,7 @@ async fn build_boards(
 
 /// Evaluated and emitted in this order; the ids and names are what the client
 /// draws, so neither may be reworded.
-fn trophies(per: &[Obj; 7], games: i64, wins: i64, podiums: i64, streak: i64) -> Vec<TrophyView> {
+fn trophies(per: &[Obj; 8], games: i64, wins: i64, podiums: i64, streak: i64) -> Vec<TrophyView> {
     let kills = per[FPS].int("kills").unwrap_or(0);
     let best_wpm = per[TYPE].float("bestWpm").unwrap_or(0.0);
     // `or 10 ** 9` is a truthiness fallback, so a stored lap of 0 misses out too.
@@ -813,7 +814,7 @@ async fn build_profile(
     .fetch_all(pool)
     .await?;
 
-    let mut per: [Obj; 7] = std::array::from_fn(|_| {
+    let mut per: [Obj; 8] = std::array::from_fn(|_| {
         let mut o = Obj::default();
         o.set("played", Value::from(0_i64));
         o.set("wins", Value::from(0_i64));
@@ -882,7 +883,7 @@ async fn build_profile(
     let played_total: i64 = per.iter().map(|p| p.int("played").unwrap_or(0)).sum();
     let wins_total: i64 = per.iter().map(|p| p.int("wins").unwrap_or(0)).sum();
     let trophies = trophies(&per, played_total, wins_total, podiums, streak);
-    let [kart, plat, fps, golf, typing, td, bowl] = per;
+    let [kart, plat, fps, golf, typing, td, bowl, rally] = per;
 
     let slots = sqlx::query("SELECT slots FROM equipped_cosmetics WHERE user_id = ?1")
         .bind(&id)
@@ -920,7 +921,7 @@ async fn build_profile(
         avatar_url: avatar,
         progress: pr,
         streak,
-        games: GamesView { kart, plat, fps, golf, typing, td, bowl },
+        games: GamesView { kart, plat, fps, golf, typing, td, bowl, rally },
         totals: Totals { played: played_total, wins: wins_total, podiums },
         trophies,
         cos,
@@ -1280,7 +1281,7 @@ mod tests {
 
     #[test]
     fn trophies_come_out_in_the_declared_order() {
-        let mut per: [Obj; 7] = std::array::from_fn(|_| Obj::default());
+        let mut per: [Obj; 8] = std::array::from_fn(|_| Obj::default());
         for p in per.iter_mut() {
             p.set("played", Value::from(1_i64));
             p.set("wins", Value::from(0_i64));
@@ -1307,7 +1308,7 @@ mod tests {
 
     #[test]
     fn an_empty_profile_earns_nothing() {
-        let per: [Obj; 7] = std::array::from_fn(|_| Obj::default());
+        let per: [Obj; 8] = std::array::from_fn(|_| Obj::default());
         assert!(trophies(&per, 0, 0, 0, 0).is_empty());
         // One game played is the first trophy and nothing else.
         let got: Vec<&str> = trophies(&per, 1, 0, 0, 0).iter().map(|t| t.id).collect();

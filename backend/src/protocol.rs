@@ -34,6 +34,8 @@ pub const GAMES: &[(&str, i64, &[&str])] = &[
     ("type", 1, &[]),
     ("td", 1, &[]),
     ("bowl", 1, &[]),
+    // Valley Rally (HQ 2.7, Rust-only): its own hub (rally.rs).
+    ("rally", 1, &[]),
 ];
 
 /// The protocol version of game `g` (1 for a game this server does not know).
@@ -89,7 +91,7 @@ mod tests {
         let info = arena_info();
         let keys: Vec<&String> = info["games"].as_object().unwrap().keys().collect();
         assert_eq!(keys, ["pond", "race", "duel", "mines", "farm", "golf", "kart",
-                          "plat", "fps", "strike", "hq", "type", "td", "bowl"]
+                          "plat", "fps", "strike", "hq", "type", "td", "bowl", "rally"]
                        .iter().map(|s| s.to_string()).collect::<Vec<_>>()
                        .iter().collect::<Vec<_>>());
         // Every game this Arena advertises, it referees.
