@@ -864,9 +864,11 @@ function create(THREE, canvas, opts){
       camera.position.copy(cam.p);
     } else {
       // bumper (1) or hood (2): fixed to the body
-      var off2 = c.mode === 1 ? [0, -0.18, -2.25] : [0, 0.42, -0.9];
+      // (offsets along the car's forward axis: the bumper sits past the nose, the hood over the front axle)
+      var fa = car && car.spec ? car.spec.a : 1.1;
+      var off2 = c.mode === 1 ? [0, -0.2, fa + 0.95] : [0, 0.5, fa*0.8];
       camera.position.set(P.p[0], P.p[1], P.p[2]).addScaledVector(RT, off2[0]).addScaledVector(U, off2[1]).addScaledVector(F, off2[2]);
-      cam.look.copy(camera.position).addScaledVector(F, 20).addScaledVector(U, c.mode === 1 ? 0.6 : -0.6);
+      cam.look.copy(camera.position).addScaledVector(F, 20).addScaledVector(U, c.mode === 1 ? 0.5 : -0.1);
     }
     if(shakeAmt > 0){
       var t = cam.t*31;
