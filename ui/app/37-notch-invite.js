@@ -13,7 +13,23 @@ function notchInviteSeen(){
   var m = /^later:(\d+)$/.exec(v); return !!(m && Date.now() - (+m[1]) < NOTCH_INVITE_LATER);
 }
 function notchInviteRemember(v){ try { localStorage.setItem(NOTCH_INVITE_KEY, v); } catch(e){} }
-function notchStatus(){ return fetch("/api/notch/status").then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; }); }
+// {stale: true} when this server has no notch routes yet: a Python HQ that was not restarted
+// after a pull, or a Rust HQ (dashboard-rs) built before it learned them (it needs one rebuild).
+function notchStatus(){
+  return fetch("/api/notch/status").then(function(r){
+    if(r.status === 404) return {stale: true};
+    return r.ok ? r.json() : null;
+  }).catch(function(){ return null; });
+}
+function notchServerIsRust(){
+  return fetch("/api/server-stats").then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(j){ return !!(j && j.impl === "rust"); }).catch(function(){ return false; });
+}
+var NOTCH_RESTART = "launchctl kickstart -k gui/$(id -u)/com.claudehq.dashboard";
+var NOTCH_REBUILD = "cargo build --release --manifest-path dashboard-rs/Cargo.toml && " + NOTCH_RESTART;
+function notchOpenStale(manual){
+  notchServerIsRust().then(function(rust){ notchInviteOpen({stale: true, rust: rust}, manual); });
+}
 
 // Look once, a few seconds after the page settles; wait while another dialog is open.
 function notchInviteCheck(tries){
@@ -21,6 +37,7 @@ function notchInviteCheck(tries){
   if(notchInviteSeen() || tries > 20) return;
   if(typeof currentModal === "function" && currentModal()){ NOTCH_INVITE.timer = setTimeout(function(){ notchInviteCheck(tries + 1); }, 15000); return; }
   notchStatus().then(function(s){
+    if(s && s.stale){ notchOpenStale(false); return; }
     if(!s || !s.mac || !s.available) return;
     if(s.installed){ notchInviteRemember("installed"); return; }
     notchInviteOpen(s);
@@ -57,7 +74,20 @@ function notchInviteRender(s, phase, msg){
   b.appendChild(ul);
   b.appendChild(niEl("p", "ni-note muted", "Installing builds the app (about a minute), puts it in ~/Applications, starts it at login, and adds HQ Notch's hooks to ~/.claude/settings.json (backed up first; only its own entries)."));
   var row = niEl("div", "ni-actions");
-  if(phase === "installed"){
+  if(phase === "stale"){
+    var rust = !!(s && s.rust), cmd = rust ? NOTCH_REBUILD : NOTCH_RESTART;
+    b.appendChild(niEl("p", "ni-error", rust
+      ? "Your HQ runs on Rust (claudehq) and was built before it learned about HQ Notch. Rebuild it once; after that, HQ's Update rebuilds it for you."
+      : "This HQ server started before HQ Notch was added. Restart it (or use Update) and this dialog will offer the install."));
+    b.appendChild(niEl("p", "ni-note muted", "Run this in Terminal, in your Claude HQ folder:"));
+    b.appendChild(niEl("code", "ni-cmd", cmd));
+    var cpy = niEl("button", "hbtn on", "Copy command"); cpy.type = "button"; cpy.id = "notchInviteGo";
+    cpy.addEventListener("click", function(){
+      try { navigator.clipboard.writeText(cmd).then(function(){ if(typeof toast === "function") toast("Copied: run it in your Claude HQ folder"); }); } catch(e){}
+    });
+    var lat = niEl("button", "hbtn ghost", "Not now"); lat.type = "button"; lat.addEventListener("click", function(){ notchInviteClose("later"); });
+    [cpy, lat].forEach(function(n){ row.appendChild(n); });
+  } else if(phase === "installed"){
     row.appendChild(niEl("span", "ni-status ok", "HQ Notch is installed on this Mac" + (s && s.running ? " and running." : ".")));
     var re = niEl("button", "hbtn ghost", "Reinstall"); re.type = "button"; re.disabled = !(s && s.tools);
     re.addEventListener("click", notchInviteInstall); row.appendChild(re);
@@ -89,7 +119,7 @@ function notchInviteOpen(s, manual){
   var back = notchInviteModal();
   NOTCH_INVITE.opener = document.activeElement; NOTCH_INVITE.manual = !!manual;
   back.classList.add("open"); back.setAttribute("aria-hidden", "false");
-  notchInviteRender(s, s && s.installed ? "installed" : "ask");
+  notchInviteRender(s, s && s.stale ? "stale" : s && s.installed ? "installed" : "ask");
   var go = $("notchInviteGo"); (go && !go.disabled ? go : $("notchInviteClose")).focus();
   if(typeof announce === "function") announce("New: HQ Notch. Your Claude HQ party in the Mac's notch.");
 }
@@ -122,12 +152,9 @@ function notchInviteInstall(){
 }
 // Reopen by hand (Settings > HQ Notch, command palette), whatever was chosen before.
 function openNotchInvite(){
-  fetch("/api/notch/status").then(function(r){
-    if(r.status === 404) return {stale: true};                 // files updated (git pull) but this server started before 2.6.0
-    return r.ok ? r.json() : null;
-  }).catch(function(){ return null; }).then(function(s){
+  notchStatus().then(function(s){
     var say = function(m){ if(typeof toast === "function") toast(m); };
-    if(s && s.stale){ say("Restart HQ to finish the update: this HQ server started before HQ Notch was added."); return; }
+    if(s && s.stale){ notchOpenStale(true); return; }
     if(!s){ say("HQ did not answer."); return; }
     if(!s.mac){ say("HQ Notch is for Macs only."); return; }
     if(!s.available){ say("This HQ has no notch/ folder: update HQ first."); return; }

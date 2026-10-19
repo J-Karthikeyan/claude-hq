@@ -1976,6 +1976,7 @@ html.hq-calm #confetti{display:none!important}
 .ni-error{margin:0;font-size:12px;color:var(--need)}
 .ni-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .ni-status{font-size:13px;color:var(--muted)}
+.ni-cmd{display:block;padding:10px 12px;border-radius:var(--radius-sm);background:var(--panel2);border:1px solid var(--line);font:12px/1.5 var(--mono);color:var(--ink);white-space:pre-wrap;word-break:break-all;user-select:all}
 .ni-status.ok{color:var(--good);font-weight:650}
 .ni-never{margin-left:auto}
 .tcard-top{display:flex;justify-content:space-between;align-items:center}
