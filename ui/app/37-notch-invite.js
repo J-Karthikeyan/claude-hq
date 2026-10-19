@@ -133,6 +133,14 @@ function notchInviteClose(why){
   var o = NOTCH_INVITE.opener; NOTCH_INVITE.opener = null;
   if(o && o.focus && o.isConnected){ try { o.focus(); } catch(e){} }
 }
+// The lines that say why: the compiler's own "error:" lines (swift build), else the last two.
+// The tail alone is the installer's Python traceback, which only says that the build failed.
+function notchFailReason(log){
+  var lines = String(log || "").split("\n").map(function(l){ return l.trim(); }).filter(Boolean);
+  var errs = lines.filter(function(l){ return /(^|\s)error:/.test(l) && !/CalledProcessError/.test(l); });
+  var pick = errs.length ? errs.slice(0, 3) : lines.slice(-2);
+  return pick.join(" ").slice(0, 600);
+}
 function notchInviteInstall(){
   notchInviteRender(null, "running");
   fetch("/api/notch/install", {method: "POST", headers: {"Content-Type": "application/json", "X-HQ-Token": CSRF}, body: "{}"})
@@ -144,7 +152,7 @@ function notchInviteInstall(){
           var j = s && s.job; if(!j || j.state === "running") return;
           clearInterval(NOTCH_INVITE.poll); NOTCH_INVITE.poll = 0;
           if(j.state === "done"){ notchInviteRender(s, "done"); notchInviteRemember("installed"); if(typeof announce === "function") announce("HQ Notch is installed."); }
-          else notchInviteRender(s, "ask", "The install failed: " + String(j.log || "").split("\n").filter(Boolean).slice(-2).join(" "));
+          else notchInviteRender(s, "ask", "The install failed: " + notchFailReason(j.log));
         });
       }, 2000);
     })
