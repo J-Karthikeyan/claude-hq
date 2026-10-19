@@ -91,7 +91,10 @@ function mount(el, api){
   var worlds = {}, cur = null, fading = false;
   var view = {yaw: PI/4, pitch: 0.62, zoom: 1.45, target: null, goal: null, span: 12};
   var desks = [], deskById = {}, clickables = [], doorHits = [], projHits = [];
-  var avatar = null, charLib = {}, CH_H = null;
+  // Everyone is drawn 1.7 m tall against CH_H, the height of the six Mini Characters' shared
+  // skeleton to the top of the hair (model units, ~0.67-0.79 by hairstyle): one fixed figure, so
+  // everyone is the same size whichever model happened to load first.
+  var avatar = null, charLib = {}, CH_H = 0.72;
   var filter = null, sessions = [];
   var tex = {}, wall = null, sky = {}, lamps = [], winPanes = [], streams = [], holo = {};
   var night = null, raf = 0, last = 0, acc = {scr: 0, wall: 0, sky: 0};
@@ -147,121 +150,384 @@ function mount(el, api){
     }
   }
 
-  // A bicycle: forward is +z, wheels on the ground. {g, wheels:[rear, front], crank, steer}.
-  var BIKE_WR = 0.34, BIKE_WB = 1.04;
-  function tube(a, b, r, m, p){
-    var d = new THREE.Vector3().subVectors(b, a), o = new THREE.Mesh(new THREE.CylinderGeometry(r, r, d.length(), 8), m);
-    o.position.copy(a).addScaledVector(d, 0.5); o.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
-    o.castShadow = true; p.add(o); return o;
+  /* ---------- the vehicles ---------- */
+  // Built round the people who ride them (the Mini Characters: short legs, long arms, a big head).
+  // Each says where its rider goes: a-seat (the hips), a-grip-l / a-grip-r (the hands) and
+  // a-foot-l / a-foot-r (pegs or pedals). The grips turn with the bars and the pedals go round with
+  // the cranks, so a rider's hands follow the steering and the feet pedal (ridePose).
+  // A kind is modelled once from rounded, bevelled parts, merged per material within each rigid
+  // piece (the body; each wheel; the bars; the cranks; the steering wheel), then cloned for every
+  // car, bike and motorbike on the street with its own paint: a handful of draw calls each, and
+  // nothing modelled again when the street is rebuilt. {g, wheels, steer, seat, grips, feet, R,
+  // lean, brake(on)}; a bicycle adds crank, a car spin (its steering wheel) and hats: false (a hat
+  // would not fit under the roof).
+  var VBP = {};
+  var NO_SHADOW = {glass: 1, tint: 1, head: 1, tail: 1, lamp: 1, plate: 1, liner: 1};
+  function V3(x, y, z){ return new THREE.Vector3(x, y, z); }
+  function vpart(mk, geo, p, x, y, z, rx, ry, rz){
+    var m = new THREE.Mesh(geo); m.userData.mk = mk; m.position.set(x || 0, y || 0, z || 0);
+    if(rx || ry || rz) m.rotation.set(rx || 0, ry || 0, rz || 0);
+    p.add(m); return m;
   }
-  function bikeModel(color){
-    var g = new THREE.Group(), WR = BIKE_WR, WB = BIKE_WB;
-    var fm = mat(color, {metalness: 0.55, roughness: 0.32}), dark = mat(0x161a1f, {roughness: 0.65}), steel = mat(0xc4ccd4, {metalness: 0.85, roughness: 0.28});
-    var V = function(x, y, z){ return new THREE.Vector3(x, y, z); };
-    function wheel(z, p){
-      var w = new THREE.Group(); w.position.set(0, WR, z); p.add(w);
-      var tire = new THREE.Mesh(new THREE.TorusGeometry(WR, 0.036, 8, 30), dark); tire.rotation.y = PI/2; tire.castShadow = true; w.add(tire);
-      var rim = new THREE.Mesh(new THREE.TorusGeometry(WR - 0.04, 0.012, 6, 30), steel); rim.rotation.y = PI/2; w.add(rim);
-      for(var i = 0; i < 8; i++){ var sp = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, (WR - 0.04)*2, 4), steel); sp.rotation.x = i/8*PI; w.add(sp); }
-      var hub = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.09, 10), steel); hub.rotation.z = PI/2; w.add(hub);
+  function rig(p, name, x, y, z){ var g = new THREE.Group(); g.name = name; g.userData.rigid = true; g.position.set(x || 0, y || 0, z || 0); p.add(g); return g; }
+  function anchor(p, name, x, y, z){ var o = new THREE.Object3D(); o.name = name; o.position.set(x, y, z); p.add(o); return o; }
+  function rrShape(w, h, r){                      // a rounded rectangle, centred
+    var s = new THREE.Shape(), x = -w/2, y = -h/2; r = Math.max(0.001, Math.min(r, w/2, h/2));
+    s.moveTo(x + r, y); s.lineTo(x + w - r, y); s.quadraticCurveTo(x + w, y, x + w, y + r); s.lineTo(x + w, y + h - r);
+    s.quadraticCurveTo(x + w, y + h, x + w - r, y + h); s.lineTo(x + r, y + h); s.quadraticCurveTo(x, y + h, x, y + h - r);
+    s.lineTo(x, y + r); s.quadraticCurveTo(x, y, x + r, y); return s;
+  }
+  // a rounded slab, w × h × d (x, y, z), its corners rounded by r and its edges bevelled by b, centred
+  function slabGeo(w, h, d, r, b){
+    b = b == null ? Math.min(0.02, d/4, w/4, h/4) : b; if(b < 0.005) b = 0;      // (small parts: rounded corners, no bevel: fewer triangles)
+    var g = new THREE.ExtrudeGeometry(rrShape(Math.max(0.004, w - 2*b), Math.max(0.004, h - 2*b), r),
+      {depth: Math.max(0.001, d - 2*b), bevelEnabled: b > 0, bevelThickness: b, bevelSize: b, bevelSegments: b > 0.012 ? 2 : 1, curveSegments: r > 0.03 ? 4 : 2});
+    g.translate(0, 0, -Math.max(0.001, d - 2*b)/2); return g;
+  }
+  function slab(mk, w, h, d, r, p, x, y, z, rx, ry, rz, b){ return vpart(mk, slabGeo(w, h, d, r, b), p, x, y, z, rx, ry, rz); }
+  // a side profile (a shape in (z, y)) extruded across the width w (x), its edges bevelled by b
+  function sideGeo(shape, w, b){
+    var g = new THREE.ExtrudeGeometry(shape, {depth: Math.max(0.001, w - 2*b), bevelEnabled: b > 0, bevelThickness: b, bevelSize: b, bevelSegments: 2, curveSegments: 8});
+    g.rotateY(-PI/2); g.translate((w - 2*b)/2, 0, 0); return g;
+  }
+  function poly(pts){ var s = new THREE.Shape(); s.moveTo(pts[0][0], pts[0][1]); for(var i = 1; i < pts.length; i++) s.lineTo(pts[i][0], pts[i][1]); return s; }
+  // a flat bar from a to b (a pillar, a strut): w wide (x) and d deep, its edges rounded
+  function bar(mk, a, b, w, d, p){
+    var dd = new THREE.Vector3().subVectors(b, a), m = vpart(mk, slabGeo(w, dd.length(), d, Math.min(w, d)/3), p);
+    m.position.copy(a).addScaledVector(dd, 0.5); m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dd.normalize()); return m;
+  }
+  function rod(mk, a, b, r, p, seg){
+    var d = new THREE.Vector3().subVectors(b, a), m = vpart(mk, new THREE.CylinderGeometry(r, r, Math.max(0.001, d.length()), seg || 8), p);
+    m.position.copy(a).addScaledVector(d, 0.5); m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize()); return m;
+  }
+  function ring(mk, R, t, p, x, y, z, seg){ return vpart(mk, new THREE.TorusGeometry(R, t, t > 0.03 ? 8 : 5, seg || 32), p, x, y, z, 0, PI/2, 0); }   // in the y-z plane (a wheel's)
+  function disc(mk, r, w, p, x, y, z, seg){ return vpart(mk, new THREE.CylinderGeometry(r, r, w, seg || 20), p, x, y, z, 0, 0, PI/2); }   // its axle along x
+  // part of a ring over a wheel (a mudguard, an arch): from angle a0 to a1, 0 at the back (-z),
+  // PI/2 on top, PI at the front
+  function arcGeo(R, t, a0, a1){ var g = new THREE.TorusGeometry(R, t, 6, 18, a1 - a0); g.rotateZ(a0); g.rotateY(PI/2); return g; }
+
+  // merge every mesh of a rigid piece into one per material (positions and normals; uvs when all have them)
+  function mergeGeos(list){
+    var n = 0, uv = true;
+    list.forEach(function(g){ n += g.attributes.position.count; if(!g.attributes.uv) uv = false; });
+    var P = new Float32Array(n*3), N = new Float32Array(n*3), U = uv ? new Float32Array(n*2) : null, o = 0;
+    list.forEach(function(g){ var c = g.attributes.position.count;
+      P.set(g.attributes.position.array, o*3); N.set(g.attributes.normal.array, o*3); if(U) U.set(g.attributes.uv.array, o*2); o += c; g.dispose(); });
+    var out = new THREE.BufferGeometry(); out.setAttribute("position", new THREE.BufferAttribute(P, 3)); out.setAttribute("normal", new THREE.BufferAttribute(N, 3));
+    if(U) out.setAttribute("uv", new THREE.BufferAttribute(U, 2));
+    out.computeBoundingSphere(); return out;
+  }
+  function compile(root){
+    root.userData.rigid = true; root.updateMatrixWorld(true);
+    var rigids = []; root.traverse(function(o){ if(o.userData.rigid) rigids.push(o); });
+    rigids.forEach(function(R){
+      var inv = new THREE.Matrix4().copy(R.matrixWorld).invert(), by = {}, done = [];
+      (function walk(o){ o.children.forEach(function(ch){
+        if(ch.userData.rigid) return;
+        if(ch.isMesh && ch.userData.mk){
+          var gm = ch.geometry.index ? ch.geometry.toNonIndexed() : ch.geometry.clone();
+          gm.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, ch.matrixWorld));
+          (by[ch.userData.mk] = by[ch.userData.mk] || []).push(gm); done.push(ch);
+        }
+        walk(ch);
+      }); })(R);
+      done.forEach(function(m){ m.parent.remove(m); m.geometry.dispose(); });
+      Object.keys(by).forEach(function(mk){
+        var m = new THREE.Mesh(mergeGeos(by[mk])); m.userData.mk = mk; m.castShadow = !NO_SHADOW[mk]; m.receiveShadow = mk !== "glass";
+        if(mk === "glass" || mk === "tint") m.renderOrder = 2;
+        R.add(m);
+      });
+    });
+    return root;
+  }
+  // one vehicle's materials: c1 its paint, c2 the accent (stripes, the rims of a motorbike)
+  var plateTex = null;
+  function vmats(c1, c2){
+    if(!plateTex) plateTex = canvasTex(128, 40, function(g){
+      g.fillStyle = "#f1f0e8"; g.fillRect(0, 0, 128, 40); g.strokeStyle = "#20242a"; g.lineWidth = 3; g.strokeRect(3, 3, 122, 34);
+      g.fillStyle = "#20242a"; g.font = "700 21px ui-monospace, Menlo, monospace"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText("HQ·CITY", 64, 21);
+    }).t;
+    return {
+      paint: mat(c1, {metalness: 0.45, roughness: 0.3}), accent: mat(c2, {metalness: 0.4, roughness: 0.34}),
+      dark: mat(0x1b1f25, {roughness: 0.72}), trim: mat(0x2b3038, {roughness: 0.82}), seat: mat(0x26292f, {roughness: 0.92}),
+      tyre: mat(0x17191c, {roughness: 0.95}), rim: mat(0xb9c2cb, {metalness: 0.85, roughness: 0.28}),
+      chrome: mat(0xdfe5ec, {metalness: 0.95, roughness: 0.16}),
+      glass: new THREE.MeshStandardMaterial({color: 0x9cc6e4, metalness: 0.2, roughness: 0.05, transparent: true, opacity: 0.26, depthWrite: false,
+                                             emissive: new THREE.Color(0x1d3446), emissiveIntensity: 0.35}),
+      tint: new THREE.MeshStandardMaterial({color: 0x30536e, metalness: 0.3, roughness: 0.05, transparent: true, opacity: 0.5, depthWrite: false}),
+      liner: mat(0x0e1013, {roughness: 1, side: THREE.DoubleSide}),
+      head: emis(0xfff6e0, 0xfff1c8, 1.4), tail: emis(0x5a0d12, 0xff3344, 0.9), lamp: emis(0xffb347, 0xffa020, 0.7),
+      plate: new THREE.MeshStandardMaterial({map: plateTex, roughness: 0.6})
+    };
+  }
+  function vehicle(kind, c1, c2){
+    var bp = VBP[kind] || (VBP[kind] = compile(BUILD[kind]()));
+    var g = bp.clone(true), M = vmats(c1, c2 == null ? 0xf2f2f2 : c2), on = null;
+    g.traverse(function(o){ if(o.isMesh) o.material = M[o.userData.mk] || M.dark; });
+    function get(n){ return g.getObjectByName(n); }
+    return {g: g, M: M, get: get, seat: get("a-seat"), grips: [get("a-grip-l"), get("a-grip-r")], feet: [get("a-foot-l"), get("a-foot-r")],
+            brake: function(b){ b = !!b; if(b === on) return; on = b; M.tail.emissiveIntensity = b ? 3.4 : 0.9; }};
+  }
+
+  // A bicycle: forward is +z, wheels on the ground, sized for those legs (a small diamond frame).
+  var BIKE_WR = 0.3, BIKE_WB = 0.94, BIKE_CR = 0.1;
+  function buildBike(){
+    var g = new THREE.Group(), WR = BIKE_WR, WB = BIKE_WB, CR = BIKE_CR;
+    function wheel(p, name, x, y, z){
+      var w = rig(p, name, x, y, z);
+      ring("tyre", WR - 0.024, 0.024, w, 0, 0, 0, 40);
+      ring("rim", WR - 0.052, 0.011, w, 0, 0, 0, 40);
+      disc("chrome", 0.024, 0.08, w, 0, 0, 0, 10);
+      for(var i = 0; i < 16; i++){                                                 // laced spokes, both flanges
+        var a = i/16*PI*2, sx = i % 2 ? 0.028 : -0.028;
+        rod("chrome", V3(sx, Math.cos(a)*0.024, Math.sin(a)*0.024), V3(0, Math.cos(a + 0.25)*(WR - 0.058), Math.sin(a + 0.25)*(WR - 0.058)), 0.0035, w, 4);
+      }
       return w;
     }
-    var R = V(0, WR, -WB/2), BB = V(0, 0.3, -0.06), S = V(0, 0.9, -0.24), H = V(0, 0.93, 0.34), Hb = V(0, 0.7, 0.4);
-    var rear = wheel(-WB/2, g);
-    tube(S, BB, 0.024, fm, g); tube(BB, Hb, 0.028, fm, g); tube(S, H, 0.022, fm, g);
-    tube(BB, V(0.06, WR, -WB/2), 0.014, fm, g); tube(BB, V(-0.06, WR, -WB/2), 0.014, fm, g);
-    tube(S, V(0.06, WR, -WB/2), 0.012, fm, g); tube(S, V(-0.06, WR, -WB/2), 0.012, fm, g);
-    tube(Hb, H, 0.03, fm, g);
-    tube(S, V(0, 0.98, -0.27), 0.016, steel, g);                                   // seat post
-    var seat = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.05, 0.26), dark); seat.position.set(0, 1.01, -0.27); seat.castShadow = true; g.add(seat);
-    // the steering: fork, front wheel and bars turn about the head tube
-    var steer = new THREE.Group(); steer.position.copy(H); g.add(steer);
-    var front = wheel(WB/2 - H.z, steer); front.position.y = WR - H.y;
-    tube(V(0.06, Hb.y - H.y, Hb.z - H.z), V(0.06, WR - H.y, WB/2 - H.z), 0.014, fm, steer);
-    tube(V(-0.06, Hb.y - H.y, Hb.z - H.z), V(-0.06, WR - H.y, WB/2 - H.z), 0.014, fm, steer);
-    tube(V(0, 0, 0), V(0, 0.12, -0.04), 0.018, steel, steer);                    // stem
-    tube(V(-0.26, 0.12, -0.06), V(0.26, 0.12, -0.06), 0.014, steel, steer);      // bars
-    [-0.26, 0.26].forEach(function(x){ var gr = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.1, 8), dark); gr.rotation.z = PI/2; gr.position.set(x*1.05, 0.12, -0.06); steer.add(gr); });
-    // the cranks and pedals turn about the bottom bracket
-    var crank = new THREE.Group(); crank.position.copy(BB); g.add(crank);
-    var ring = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.012, 6, 20), steel); ring.rotation.y = PI/2; ring.position.x = 0.05; crank.add(ring);
-    [[1, 0.075], [-1, -0.075]].forEach(function(sd){
+    var BB = V3(0, 0.3, -0.02), ST = V3(0, 0.53, -0.2), H = V3(0, 0.8, 0.3), Hb = V3(0, 0.6, 0.34);
+    var rear = wheel(g, "wheel-0", 0, WR, -WB/2);
+    disc("chrome", 0.036, 0.012, rear, 0.05, 0, 0, 14);                            // the rear cog
+    // the diamond frame
+    rod("paint", BB, V3(0, 0.56, -0.21), 0.019, g, 10); rod("paint", BB, Hb, 0.021, g, 10); rod("paint", ST, H, 0.018, g, 10);
+    rod("paint", Hb, V3(0, 0.83, 0.29), 0.026, g, 10);
+    [0.05, -0.05].forEach(function(x){ rod("paint", BB, V3(x, WR, -WB/2), 0.011, g, 8); rod("paint", ST, V3(x, WR, -WB/2), 0.01, g, 8); });
+    disc("dark", 0.03, 0.09, g, 0, BB.y, BB.z, 12);                                // the bottom bracket shell
+    // the chain, round the chainring and the cog (they turn; it is drawn still)
+    rod("dark", V3(0.05, BB.y + 0.072, BB.z), V3(0.05, WR + 0.034, -WB/2), 0.006, g, 4);
+    rod("dark", V3(0.05, BB.y - 0.072, BB.z), V3(0.05, WR - 0.034, -WB/2), 0.006, g, 4);
+    // the seat post, the saddle and a rear reflector
+    rod("chrome", ST, V3(0, 0.59, -0.225), 0.012, g, 8);
+    var sad = new THREE.Shape(); sad.moveTo(-0.34, 0.585); sad.quadraticCurveTo(-0.35, 0.625, -0.27, 0.628); sad.lineTo(-0.14, 0.618);
+    sad.quadraticCurveTo(-0.06, 0.612, -0.05, 0.6); sad.quadraticCurveTo(-0.06, 0.585, -0.12, 0.588); sad.lineTo(-0.34, 0.585);
+    vpart("seat", sideGeo(sad, 0.13, 0.018), g);
+    slab("tail", 0.05, 0.03, 0.012, 0.01, g, 0, 0.55, -0.24, 0, 0, 0, 0.003);
+    // the steering: fork, front wheel, bars, a light and a bell turn about the head tube
+    var steer = rig(g, "steer", H.x, H.y, H.z);
+    wheel(steer, "wheel-1", 0, WR - H.y, WB/2 - H.z);
+    [0.045, -0.045].forEach(function(x){ rod("paint", V3(x, Hb.y - H.y, Hb.z - H.z), V3(x, WR - H.y, WB/2 - H.z), 0.012, steer, 8); });
+    slab("paint", 0.12, 0.03, 0.05, 0.01, steer, 0, Hb.y - H.y - 0.01, Hb.z - H.z, 0, 0, 0, 0.008);   // fork crown
+    rod("chrome", V3(0, 0, 0), V3(0, 0.1, 0.02), 0.014, steer, 8);                 // stem
+    [1, -1].forEach(function(s){ rod("chrome", V3(0, 0.1, 0.03), V3(s*0.27, 0.12, 0.0), 0.011, steer, 8);   // riser bars
+      vpart("dark", new THREE.CylinderGeometry(0.018, 0.018, 0.1, 10), steer, s*0.255, 0.119, 0.004, 0, 0, PI/2); });
+    slab("head", 0.05, 0.035, 0.03, 0.012, steer, 0, 0.07, 0.07, 0, 0, 0, 0.006);  // the light
+    vpart("chrome", new THREE.CylinderGeometry(0.018, 0.022, 0.016, 12), steer, 0.13, 0.13, 0.02);   // the bell
+    anchor(steer, "a-grip-l", 0.254, 0.118, 0.005); anchor(steer, "a-grip-r", -0.254, 0.118, 0.005);
+    // the cranks, the chainring and the pedals turn about the bottom bracket (left pedal on +x: the rider faces +z)
+    var crank = rig(g, "crank", BB.x, BB.y, BB.z);
+    ring("chrome", 0.072, 0.009, crank, 0.05, 0, 0, 30); disc("dark", 0.064, 0.008, crank, 0.05, 0, 0, 20);
+    [[1, 0.06], [-1, -0.06]].forEach(function(sd){
       var arm = new THREE.Group(); arm.rotation.x = sd[0] > 0 ? 0 : PI; crank.add(arm);
-      var a = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.17, 0.03), steel); a.position.set(sd[1], -0.085, 0); arm.add(a);
-      var pd = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.02, 0.06), dark); pd.position.set(sd[1]*1.6, -0.17, 0); arm.add(pd);
+      slab("chrome", 0.018, CR + 0.02, 0.026, 0.008, arm, sd[1], -CR/2, 0, 0, 0, 0, 0.004);
+      slab("dark", 0.09, 0.018, 0.055, 0.008, arm, sd[1]*2, -CR, 0, 0, 0, 0, 0.004);
+      anchor(arm, sd[0] > 0 ? "a-foot-l" : "a-foot-r", sd[1]*2, -CR, 0);
     });
-    return {g: g, wheels: [rear, front], crank: crank, steer: steer};
+    anchor(g, "a-seat", 0, 0.62, -0.2);
+    return g;
+  }
+  function bikeModel(color, c2){
+    var V = vehicle("bike", color, c2);
+    return {g: V.g, wheels: [V.get("wheel-0"), V.get("wheel-1")], crank: V.get("crank"), steer: V.get("steer"), R: BIKE_WR,
+            seat: V.seat, grips: V.grips, feet: V.feet, lean: 0.22, brake: function(){}};
   }
   // Roll a bike's wheels and cranks forward by `d` metres, its bars turned by `st` (-1..1).
   function bikeRoll(B, d, st){
     if(!B) return;
     B.wheels[0].rotation.x += d/BIKE_WR; B.wheels[1].rotation.x += d/BIKE_WR;
-    B.crank.rotation.x += d/BIKE_WR*0.55;
+    B.crank.rotation.x += d/BIKE_WR*0.5;
     if(st != null) B.steer.rotation.y = st*0.45;
   }
-  // A car you can drive: forward is +z, wheels on the ground, life-size beside a character.
-  // {g, wheels: [4], steer: [front left, front right]}. body: the paint; roof: a second colour.
-  var CAR_WR = 0.33;
-  function carModel(body, roof){
-    var g = new THREE.Group(), bm = mat(body, {metalness: 0.6, roughness: 0.3}), rm = mat(roof == null ? body : roof, {metalness: 0.5, roughness: 0.35});
-    var glass = new THREE.MeshStandardMaterial({color: 0x0b1622, metalness: 0.6, roughness: 0.12, transparent: true, opacity: 0.55});
-    var dark = mat(0x111418, {roughness: 0.9}), steel = mat(0xc4ccd4, {metalness: 0.85, roughness: 0.28});
-    box(1.7, 0.55, 3.6, bm, 0, 0.6, 0, g);                                        // the body
-    box(1.62, 0.12, 0.5, bm, 0, 0.92, 1.45, g);                                    // bonnet lip
-    var cab = box(1.5, 0.5, 1.9, glass, 0, 1.12, -0.25, g, true); cab.castShadow = true;   // windows you see the driver through
-    box(1.52, 0.06, 1.95, rm, 0, 1.4, -0.25, g);                                   // the roof, in the second colour
-    [[-0.7, 0.66], [0.7, 0.66]].forEach(function(p){ box(0.3, 0.12, 0.05, emis(0xfff6e0, 0xfff1c8, 1.2), p[0], p[1], 1.81, g, true); });
-    [[-0.7, 0.66], [0.7, 0.66]].forEach(function(p){ box(0.3, 0.1, 0.05, emis(0x5a0d12, 0xff3344, 0.9), p[0], p[1], -1.81, g, true); });
-    box(1.74, 0.16, 0.12, dark, 0, 0.38, 1.8, g); box(1.74, 0.16, 0.12, dark, 0, 0.38, -1.8, g);   // bumpers
-    var wheels = [], steer = [];
-    [[-0.86, 1.15, 1], [0.86, 1.15, 1], [-0.86, -1.15, 0], [0.86, -1.15, 0]].forEach(function(p){
-      var hold = new THREE.Group(); hold.position.set(p[0], CAR_WR, p[1]); g.add(hold);
-      var w = new THREE.Group(); hold.add(w);
-      var tyre = new THREE.Mesh(new THREE.CylinderGeometry(CAR_WR, CAR_WR, 0.24, 18), dark); tyre.rotation.z = PI/2; tyre.castShadow = true; w.add(tyre);
-      var hub = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.25, 12), steel); hub.rotation.z = PI/2; w.add(hub);
-      wheels.push(w); if(p[2]) steer.push(hold);
+
+  // A car you can drive: forward is +z, wheels on the ground, a rounded little hatchback with a
+  // tall glass cabin round a driver (right-hand drive) you see through the windows and the
+  // sunroof, hands on the wheel. Paint and an accent stripe.
+  var CAR_WR = 0.34, CAR_WX = 0.79, CAR_WZ = 1.2;
+  function buildCar(){
+    var g = new THREE.Group();
+    // the lower body: its side profile, both wheel arches cut out, extruded across and rounded off
+    var s = new THREE.Shape();
+    s.moveTo(-1.8, 0.36); s.lineTo(-1.66, 0.3); s.lineTo(-CAR_WZ - 0.46, 0.34);
+    s.absarc(-CAR_WZ, 0.34, 0.46, PI, 0, true); s.lineTo(-CAR_WZ + 0.46, 0.3);
+    s.lineTo(CAR_WZ - 0.46, 0.3); s.lineTo(CAR_WZ - 0.46, 0.34);
+    s.absarc(CAR_WZ, 0.34, 0.46, PI, 0, true); s.lineTo(1.66, 0.3); s.lineTo(1.8, 0.36);
+    s.lineTo(1.84, 0.6); s.quadraticCurveTo(1.84, 0.8, 1.56, 0.84); s.lineTo(0.8, 0.92);
+    s.lineTo(-1.24, 0.92); s.lineTo(-1.62, 0.89); s.quadraticCurveTo(-1.84, 0.86, -1.84, 0.64); s.lineTo(-1.8, 0.36);
+    vpart("paint", sideGeo(s, 1.76, 0.06), g);
+    // inside the arches: dark liners, so the wheels stand out
+    [-CAR_WZ, CAR_WZ].forEach(function(z){ vpart("liner", new THREE.CylinderGeometry(0.41, 0.41, 1.58, 16, 1, true, 0, PI), g, 0, 0.34, z, 0, 0, PI/2); });
+    // the cabin: glass all round (windscreen, side windows, the rear), under a roof with a sunroof
+    var gh = poly([[-1.5, 0.95], [-1.2, 1.6], [-1.0, 1.68], [0.26, 1.68], [0.44, 1.6], [0.84, 0.95]]);
+    vpart("glass", sideGeo(gh, 1.56, 0.05), g);
+    var roof = rrShape(1.62, 1.36, 0.2); roof.holes.push(rrShape(1.0, 0.8, 0.14));
+    var rg = new THREE.ExtrudeGeometry(roof, {depth: 0.03, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.02, bevelSegments: 2, curveSegments: 6});
+    rg.rotateX(PI/2); rg.translate(0, 1.77, -0.36); vpart("paint", rg, g);
+    slab("tint", 1.02, 0.012, 0.82, 0.14, g, 0, 1.755, -0.36, 0, 0, 0, 0.004);    // the sunroof: tinted glass you see the driver through
+    // the pillars and the window frames
+    [1, -1].forEach(function(sx){
+      var x = sx*0.79;
+      bar("paint", V3(x, 0.95, 0.85), V3(x, 1.73, 0.4), 0.07, 0.1, g);             // A
+      bar("trim", V3(x, 0.95, -0.4), V3(x, 1.74, -0.4), 0.06, 0.09, g);             // B
+      bar("paint", V3(x, 0.95, -1.46), V3(x, 1.72, -1.06), 0.08, 0.2, g);          // C
+      bar("trim", V3(x, 1.7, 0.42), V3(x, 1.72, -1.02), 0.05, 0.05, g);             // the top of the door frames
+      slab("trim", 0.03, 0.03, 2.1, 0.01, g, sx*0.82, 0.975, -0.22, 0, 0, 0, 0.008);   // the belt line
+      // the side: door shut lines, handles, the accent stripe, the mirror
+      slab("trim", 0.01, 0.56, 0.012, 0.004, g, sx*0.886, 0.64, 0.76, 0, 0, 0, 0.002);
+      slab("trim", 0.01, 0.56, 0.012, 0.004, g, sx*0.886, 0.64, -0.44, 0, 0, 0, 0.002);
+      slab("chrome", 0.02, 0.035, 0.12, 0.01, g, sx*0.89, 0.84, -0.3, 0, 0, 0, 0.006);
+      slab("accent", 0.012, 0.075, 3.0, 0.01, g, sx*0.886, 0.8, 0, 0, 0, 0, 0.003);
+      rod("paint", V3(sx*0.84, 1.0, 0.7), V3(sx*0.97, 1.05, 0.68), 0.018, g, 6);
+      slab("paint", 0.06, 0.11, 0.17, 0.03, g, sx*1.0, 1.08, 0.66, 0, sx*0.12, 0, 0.012);
+      // the lights: headlights, indicators, tail lights
+      slab("head", 0.34, 0.14, 0.04, 0.05, g, sx*0.58, 0.7, 1.89, 0, 0, 0, 0.012);
+      slab("lamp", 0.1, 0.05, 0.03, 0.02, g, sx*0.81, 0.56, 1.86, 0, 0, 0, 0.008);
+      slab("tail", 0.32, 0.13, 0.04, 0.04, g, sx*0.6, 0.72, -1.895, 0, 0, 0, 0.012);
+      // the hood stripes
+      slab("accent", 0.14, 0.012, 0.92, 0.01, g, sx*0.17, 0.965, 1.24, 0.085, 0, 0, 0.003);
     });
-    return {g: g, wheels: wheels, steer: steer};
+    // bumpers, the grille, the number plates
+    slab("dark", 1.78, 0.18, 0.2, 0.08, g, 0, 0.36, 1.88, 0, 0, 0, 0.04);
+    slab("dark", 1.78, 0.18, 0.2, 0.08, g, 0, 0.36, -1.88, 0, 0, 0, 0.04);
+    slab("trim", 0.9, 0.16, 0.04, 0.05, g, 0, 0.56, 1.895, 0, 0, 0, 0.01);
+    [-0.24, 0, 0.24].forEach(function(x){ slab("chrome", 0.02, 0.12, 0.02, 0.005, g, x, 0.56, 1.92, 0, 0, 0, 0.004); });
+    vpart("plate", new THREE.PlaneGeometry(0.42, 0.13), g, 0, 0.4, 1.985);
+    vpart("plate", new THREE.PlaneGeometry(0.42, 0.13), g, 0, 0.4, -1.985, 0, PI, 0);
+    // inside: two seats, the dashboard and the steering wheel (it turns: spin)
+    [-0.38, 0.38].forEach(function(x){
+      slab("seat", 0.5, 0.14, 0.5, 0.06, g, x, 0.42, -0.3);
+      slab("seat", 0.48, 0.72, 0.12, 0.08, g, x, 0.86, -0.62, -0.14);
+      slab("seat", 0.28, 0.16, 0.1, 0.05, g, x, 1.3, -0.7, -0.1);
+    });
+    slab("dark", 1.48, 0.14, 0.36, 0.05, g, 0, 1.0, 0.6, 0.18);
+    var col = new THREE.Group(); col.position.set(-0.38, 0.99, 0.07); col.rotation.x = -0.6; g.add(col);   // tilted to face the driver
+    rod("dark", V3(0, 0, 0.02), V3(0, 0, 0.3), 0.025, col, 8);
+    var spin = rig(col, "spin");
+    vpart("dark", new THREE.TorusGeometry(0.16, 0.022, 8, 28), spin);
+    [0, 2.1, -2.1].forEach(function(a){ slab("chrome", 0.026, 0.15, 0.02, 0.008, spin, Math.sin(a)*0.075, -Math.cos(a)*0.075, 0, 0, 0, a, 0.005); });
+    vpart("chrome", new THREE.CylinderGeometry(0.04, 0.04, 0.04, 14), spin, 0, 0, 0, PI/2, 0, 0);
+    anchor(spin, "a-grip-l", 0.16*Math.sin(1.05), 0.16*Math.cos(1.05), 0.02); anchor(spin, "a-grip-r", -0.16*Math.sin(1.05), 0.16*Math.cos(1.05), 0.02);   // ten to two
+    anchor(g, "a-foot-l", -0.27, 0.3, 0.1); anchor(g, "a-foot-r", -0.49, 0.3, 0.1);                       // on the pedals, out of sight
+    anchor(g, "a-seat", -0.38, 0.5, -0.26);
+    // the wheels: chunky tyres round dark alloys with five bright spokes; the front ones steer
+    [[-CAR_WX, CAR_WZ, "steer-l"], [CAR_WX, CAR_WZ, "steer-r"], [-CAR_WX, -CAR_WZ, null], [CAR_WX, -CAR_WZ, null]].forEach(function(p, i){
+      var hold = new THREE.Group(); hold.position.set(p[0], CAR_WR, p[1]); if(p[2]) hold.name = p[2]; g.add(hold);
+      var w = rig(hold, "wheel-" + i);
+      ring("tyre", CAR_WR - 0.1, 0.1, w, 0, 0, 0, 28);
+      disc("trim", CAR_WR - 0.12, 0.16, w, 0, 0, 0, 22);
+      [1, -1].forEach(function(sx){
+        ring("rim", CAR_WR - 0.13, 0.016, w, sx*0.08, 0, 0, 24);
+        for(var k = 0; k < 5; k++){ var a = k/5*PI*2; slab("rim", 0.02, 0.14, 0.04, 0.008, w, sx*0.08, Math.cos(a)*0.09, Math.sin(a)*0.09, a, 0, 0, 0.004); }
+        disc("chrome", 0.045, 0.02, w, sx*0.085, 0, 0, 14);
+      });
+    });
+    return g;
+  }
+  function carModel(body, accent){
+    var V = vehicle("car", carPaint(body), accent);
+    return {g: V.g, wheels: [0, 1, 2, 3].map(function(i){ return V.get("wheel-" + i); }), steer: [V.get("steer-l"), V.get("steer-r")], spin: V.get("spin"),
+            R: CAR_WR, seat: V.seat, grips: V.grips, feet: V.feet, lean: -0.08, hats: false, riderK: 0.8, brake: V.brake};
+  }
+  // a dark paint is lifted a little, so a navy or black car still reads on a night street
+  function carPaint(hex){
+    var c = new THREE.Color(hex == null ? 0x2a3c50 : hex), l = 0.2126*c.r + 0.7152*c.g + 0.0722*c.b;
+    if(l < 0.18) c.lerp(new THREE.Color(0x9fb3c8), 0.22*(1 - l/0.18));
+    return c.getHex();
   }
   function carRoll(C, d, st){
     if(!C) return;
     C.wheels.forEach(function(w){ w.rotation.x += d/CAR_WR; });
-    if(st != null) C.steer.forEach(function(h){ h.rotation.y = st*0.5; });
+    if(st != null){ C.steer.forEach(function(h){ h.rotation.y = st*0.5; }); if(C.spin) C.spin.rotation.z = -st*1.6; }
   }
-  // A motorbike: forward is +z, wheels on the ground. {g, wheels: [rear, front], steer}.
-  var MOTO_WR = 0.34, MOTO_WB = 1.42;
-  function motoModel(color){
-    var g = new THREE.Group(), WR = MOTO_WR, WB = MOTO_WB;
-    var paint = mat(color, {metalness: 0.6, roughness: 0.28}), dark = mat(0x15191e, {roughness: 0.6}), steel = mat(0xc4ccd4, {metalness: 0.85, roughness: 0.25});
-    function wheel(p, z, y){
-      var w = new THREE.Group(); w.position.set(0, y, z); p.add(w);
-      var tyre = new THREE.Mesh(new THREE.TorusGeometry(WR - 0.07, 0.085, 10, 28), dark); tyre.rotation.y = PI/2; tyre.castShadow = true; w.add(tyre);
-      var disc = new THREE.Mesh(new THREE.CylinderGeometry(WR - 0.12, WR - 0.12, 0.05, 20), steel); disc.rotation.z = PI/2; w.add(disc);
+
+  // A motorbike: a small street bike, forward is +z, wheels on the ground. Drawn at MOTO_S: a
+  // solid machine under a big-headed rider (2.1 m long, the car 3.8 m).
+  var MOTO_WR = 0.34, MOTO_WB = 1.42, MOTO_S = 1.2;
+  function buildMoto(){
+    var g = new THREE.Group(), m = new THREE.Group(), WR = MOTO_WR, WB = MOTO_WB;
+    m.scale.setScalar(MOTO_S); g.add(m);
+    function wheel(p, name, x, y, z){
+      var w = rig(p, name, x, y, z);
+      ring("tyre", WR - 0.07, 0.07, w, 0, 0, 0, 32);
+      ring("rim", WR - 0.145, 0.018, w, 0, 0, 0, 30);                             // the rim; the spokes in the accent
+      for(var k = 0; k < 5; k++){ var a = k/5*PI*2, L = WR - 0.165, rc = 0.02 + L/2; slab("accent", 0.026, L, 0.022, 0.008, w, 0, Math.cos(a)*rc, Math.sin(a)*rc, a, 0, 0, 0.006); }
+      disc("chrome", 0.045, 0.13, w, 0, 0, 0, 14);
+      disc("rim", 0.13, 0.01, w, -0.055, 0, 0, 24);                               // the brake disc
       return w;
     }
-    var rear = wheel(g, -WB/2, WR);
-    box(0.3, 0.32, 0.62, steel, 0, 0.5, -0.05, g);                                   // the engine
-    box(0.12, 0.12, 0.7, steel, 0.2, 0.36, -0.45, g);                                // the exhaust
-    var tank = box(0.42, 0.26, 0.62, paint, 0, 0.86, 0.2, g);                        // the tank, in the HQ's colour
-    box(0.34, 0.1, 0.62, dark, 0, 0.8, -0.38, g);                                    // the seat
-    box(0.3, 0.16, 0.5, paint, 0, 0.74, -0.72, g);                                   // the tail
-    box(0.06, 0.06, 0.9, steel, 0, 0.58, -0.35, g);                                  // the swingarm
-    // the steering: forks, front wheel, bars and headlight turn about the head
-    var steer = new THREE.Group(); steer.position.set(0, 0.98, 0.5); g.add(steer);
-    var front = wheel(steer, WB/2 - 0.5, WR - 0.98);
-    [-0.1, 0.1].forEach(function(x){ var f = box(0.05, 0.75, 0.05, steel, x, -0.33, 0.1, steer); f.rotation.x = -0.35; });
-    box(0.7, 0.04, 0.04, steel, 0, 0.12, -0.06, steer);                              // the bars
-    [-0.33, 0.33].forEach(function(x){ box(0.05, 0.05, 0.12, dark, x, 0.12, -0.06, steer); });
-    box(0.22, 0.18, 0.12, paint, 0, 0, 0.12, steer);                                 // the headlight cowl
-    box(0.14, 0.1, 0.03, emis(0xfff6e0, 0xfff1c8, 1.4), 0, 0, 0.19, steer, true);
-    box(0.12, 0.06, 0.03, emis(0x5a0d12, 0xff3344, 0.9), 0, 0.78, -0.98, g, true);  // the tail light
-    return {g: g, wheels: [rear, front], steer: steer};
+    var rear = wheel(m, "wheel-0", 0, WR, -WB/2);
+    disc("dark", 0.1, 0.012, rear, 0.075, 0, 0, 22);                              // the rear sprocket
+    var piv = V3(0, 0.47, -0.27);
+    // the frame, the swingarm and the shock
+    [0.075, -0.075].forEach(function(x){
+      rod("trim", V3(x, 0.94, 0.42), V3(x, 0.5, -0.24), 0.03, m, 8);
+      rod("dark", V3(x, piv.y, piv.z), V3(x, WR, -WB/2), 0.026, m, 8);
+    });
+    rod("trim", V3(0, 0.9, 0.46), V3(0, 0.36, 0.2), 0.026, m, 8);
+    rod("accent", V3(0, 0.5, -0.46), V3(0, 0.78, -0.38), 0.034, m, 8); rod("chrome", V3(0, 0.46, -0.47), V3(0, 0.82, -0.37), 0.014, m, 6);
+    // the engine: crankcase, cylinder with fins, side covers
+    slab("chrome", 0.26, 0.26, 0.44, 0.06, m, 0, 0.42, -0.03, 0, 0, 0, 0.03);
+    slab("dark", 0.22, 0.2, 0.18, 0.04, m, 0, 0.6, 0.12, -0.4, 0, 0, 0.02);
+    [0.54, 0.59, 0.64, 0.69].forEach(function(y){ slab("chrome", 0.27, 0.012, 0.21, 0.005, m, 0, y, 0.12 + (y - 0.6)*0.42, -0.4, 0, 0, 0.003); });
+    [0.14, -0.14].forEach(function(x){ disc("chrome", 0.1, 0.03, m, x, 0.42, -0.06, 20); });
+    // the exhaust (on the right) and the chain (on the left)
+    rod("chrome", V3(-0.05, 0.56, 0.2), V3(-0.12, 0.26, 0.1), 0.024, m, 8); rod("chrome", V3(-0.12, 0.26, 0.1), V3(-0.16, 0.3, -0.36), 0.024, m, 8);
+    rod("chrome", V3(-0.17, 0.33, -0.36), V3(-0.2, 0.5, -0.78), 0.06, m, 14); vpart("dark", new THREE.CylinderGeometry(0.04, 0.04, 0.02, 12), m, -0.2, 0.5, -0.785, 1.17, 0, 0);
+    rod("dark", V3(0.075, 0.51, piv.z), V3(0.075, WR + 0.1, -WB/2), 0.008, m, 4); rod("dark", V3(0.075, 0.43, piv.z), V3(0.075, WR - 0.1, -WB/2), 0.008, m, 4);
+    disc("dark", 0.045, 0.02, m, 0.075, 0.47, piv.z, 14);
+    // the tank (paint, an accent stripe), the side panels, the seat, the tail with its light and plate
+    var tk = new THREE.Shape(); tk.moveTo(-0.14, 0.78); tk.lineTo(0.36, 0.83); tk.quadraticCurveTo(0.52, 0.86, 0.47, 0.98);
+    tk.quadraticCurveTo(0.36, 1.06, 0.08, 1.04); tk.quadraticCurveTo(-0.14, 1.0, -0.14, 0.78);
+    vpart("paint", sideGeo(tk, 0.4, 0.06), m);
+    slab("accent", 0.08, 0.014, 0.42, 0.01, m, 0, 1.075, 0.2, -0.06, 0, 0, 0.004);
+    [0.15, -0.15].forEach(function(x){
+      slab("paint", 0.03, 0.26, 0.38, 0.08, m, x, 0.62, 0.25, 0, 0, -x*0.6, 0.012);
+      slab("accent", 0.008, 0.04, 0.3, 0.01, m, x*1.12, 0.66, 0.25, 0, 0, -x*0.6, 0.002);
+    });
+    var st = new THREE.Shape(); st.moveTo(-0.13, 0.77); st.lineTo(-0.64, 0.8); st.quadraticCurveTo(-0.7, 0.86, -0.62, 0.875);
+    st.lineTo(-0.22, 0.86); st.quadraticCurveTo(-0.12, 0.85, -0.13, 0.77);
+    vpart("seat", sideGeo(st, 0.3, 0.035), m);
+    vpart("paint", sideGeo(poly([[-0.42, 0.7], [-1.0, 0.84], [-1.05, 0.9], [-0.66, 0.88], [-0.42, 0.78]]), 0.24, 0.035), m);
+    slab("tail", 0.15, 0.05, 0.03, 0.02, m, 0, 0.87, -1.07, 0, 0, 0, 0.008);
+    slab("dark", 0.12, 0.2, 0.02, 0.01, m, 0, 0.72, -1.0, 0.35, 0, 0, 0.005);
+    vpart("plate", new THREE.PlaneGeometry(0.16, 0.09), m, 0, 0.7, -1.02, 0.35, PI, 0);
+    [0.11, -0.11].forEach(function(x){ slab("lamp", 0.04, 0.03, 0.05, 0.012, m, x, 0.85, -1.0, 0, 0, 0, 0.006); });
+    vpart("dark", arcGeo(WR + 0.04, 0.035, 0.35*PI, 0.95*PI), m, 0, WR, -WB/2);   // the rear hugger
+    // the footpegs
+    [0.2, -0.2].forEach(function(x){ rod("trim", V3(x*0.6, 0.56, -0.12), V3(x, 0.56, -0.12), 0.016, m, 6); });
+    anchor(m, "a-foot-l", 0.2, 0.58, -0.1); anchor(m, "a-foot-r", -0.2, 0.58, -0.1);
+    // the steering: forks, front wheel, mudguard, bars and the headlight cowl turn about the head
+    var steer = rig(m, "steer", 0, 0.98, 0.5), FW = V3(0, WR - 0.98, WB/2 - 0.5);
+    wheel(steer, "wheel-1", FW.x, FW.y, FW.z);
+    [0.09, -0.09].forEach(function(x){
+      rod("chrome", V3(x, 0.04, 0.0), V3(x, -0.3, 0.1), 0.026, steer, 10);
+      rod("trim", V3(x, -0.3, 0.1), V3(x, FW.y, FW.z), 0.032, steer, 10);
+    });
+    slab("trim", 0.26, 0.05, 0.1, 0.02, steer, 0, 0.06, -0.02, 0, 0, 0, 0.01);       // the top clamp
+    vpart("paint", arcGeo(WR + 0.03, 0.04, 0.42*PI, 0.92*PI), steer, FW.x, FW.y, FW.z);   // the front mudguard
+    [1, -1].forEach(function(s){
+      rod("chrome", V3(s*0.06, 0.11, -0.05), V3(s*0.3, 0.17, -0.29), 0.018, steer, 8);
+      vpart("dark", new THREE.CylinderGeometry(0.027, 0.027, 0.12, 10), steer, s*0.34, 0.17, -0.3, 0, 0, PI/2);
+      rod("trim", V3(s*0.26, 0.19, -0.24), V3(s*0.34, 0.2, -0.17), 0.006, steer, 4);     // a lever
+      rod("trim", V3(s*0.2, 0.15, -0.2), V3(s*0.25, 0.3, -0.2), 0.008, steer, 4);        // a mirror
+      slab("trim", 0.1, 0.055, 0.02, 0.02, steer, s*0.26, 0.32, -0.2, 0, 0, 0, 0.006);
+    });
+    anchor(steer, "a-grip-l", 0.33, 0.17, -0.3); anchor(steer, "a-grip-r", -0.33, 0.17, -0.3);
+    slab("paint", 0.26, 0.22, 0.16, 0.07, steer, 0, -0.02, 0.12, 0, 0, 0, 0.03);   // the cowl
+    vpart("head", new THREE.CylinderGeometry(0.075, 0.075, 0.03, 18), steer, 0, -0.03, 0.205, PI/2, 0, 0);
+    slab("glass", 0.22, 0.16, 0.012, 0.04, steer, 0, 0.13, 0.13, -0.55, 0, 0, 0.004);   // a little screen
+    [0.13, -0.13].forEach(function(x){ slab("lamp", 0.04, 0.03, 0.05, 0.012, steer, x, -0.04, 0.16, 0, 0, 0, 0.006); });
+    anchor(g, "a-seat", 0, 0.88*MOTO_S, -0.27*MOTO_S);
+    return g;
+  }
+  function motoModel(color, c2){
+    var V = vehicle("moto", color, c2);
+    return {g: V.g, wheels: [V.get("wheel-0"), V.get("wheel-1")], steer: V.get("steer"), R: MOTO_WR*MOTO_S,
+            seat: V.seat, grips: V.grips, feet: V.feet, lean: 0.45, brake: V.brake};
   }
   function motoRoll(M, d, st){
     if(!M) return;
-    M.wheels[0].rotation.x += d/MOTO_WR; M.wheels[1].rotation.x += d/MOTO_WR;
+    M.wheels[0].rotation.x += d/(MOTO_WR*MOTO_S); M.wheels[1].rotation.x += d/(MOTO_WR*MOTO_S);
     if(st != null) M.steer.rotation.y = st*0.4;
   }
+  var BUILD = {bike: buildBike, car: buildCar, moto: buildMoto};
   // A skateboard: deck, trucks and four wheels; forward is +z (the nose). {g, deck, wheels}.
   function boardModel(color){
     var g = new THREE.Group(), deck = new THREE.Group(); g.add(deck);
@@ -288,8 +554,8 @@ function mount(el, api){
     canvasTex: function(w, h, d){ return canvasTex(w, h, d); }, screen: function(w, h, t, tr){ return screen(w, h, t, tr); },
     glow: function(c, sz, op){ return glowSprite(c, sz, op); }, label: function(t, c, sc){ return label(t, c, sc); }, glyph: function(ch, c){ return glyph(ch, c); },
     plant: function(x, z, sc, seed){ return plant(x, z, sc, seed); }, sky: function(day){ return day ? sky.day : sky.night; },
-    bike: function(col){ return bikeModel(col); }, bikeRoll: function(B, d, st){ bikeRoll(B, d, st); }, bikeColor: bikeColor,
-    car: function(body, roof){ return carModel(body, roof); }, moto: function(col){ return motoModel(col); },
+    bike: function(col, c2){ return bikeModel(col, c2); }, bikeRoll: function(B, d, st){ bikeRoll(B, d, st); }, bikeColor: bikeColor,
+    car: function(body, accent){ return carModel(body, accent); }, moto: function(col, c2){ return motoModel(col, c2); },
     board: function(col){ return boardModel(col); },
     rng: rng, hashStr: hashStr, short: short, rr: rr, crewState: crewState,
     character: function(key, cb){ makeCharacter(key, cb); }, anim: function(ch, n, sp){ setAnim(ch, n, sp); },
@@ -465,8 +731,7 @@ function mount(el, api){
     if(spec && A3 && A3.valid(spec)){
       A3.build(spec).then(function(ch){
         if(!inst.alive) return;
-        if(CH_H === null){ var hb = new THREE.Box3().setFromObject(ch.o); CH_H = Math.max(0.3, hb.max.y - hb.min.y); }
-        ch.o.scale.setScalar(1.7/CH_H);
+        ch.base = 1.7/CH_H; ch.o.scale.setScalar(ch.base);
         onReady(ch);
       }).catch(function(){ makeCharacter(key, onReady); });
       return;
@@ -474,12 +739,11 @@ function mount(el, api){
     var name = CHAR_FILES[hashStr(key) % CHAR_FILES.length];
     E.loadGlb(L, "golf", name).then(function(g){
       if(!inst.alive) return;
-      if(CH_H === null){ var hb = new THREE.Box3().setFromObject(g.scene); CH_H = Math.max(0.3, hb.max.y - hb.min.y); }
       var o = L.clone(g.scene); o.scale.setScalar(1.7/CH_H);
       o.traverse(function(n){ if(n.isMesh){ n.castShadow = true; n.frustumCulled = false; } });
       var mixer = new THREE.AnimationMixer(o), acts = {};
       ["idle", "walk", "sit", "emote-yes", "sprint"].forEach(function(n){ var cl = THREE.AnimationClip.findByName(g.animations, n); if(cl) acts[n] = mixer.clipAction(cl); });
-      onReady({o: o, mixer: mixer, acts: acts, cur: null});
+      onReady({o: o, mixer: mixer, acts: acts, cur: null, base: 1.7/CH_H});
     }).catch(function(){});
   }
   function setAnim(ch, n, speed){
@@ -670,7 +934,7 @@ function mount(el, api){
     nameTag();
     var mySpec = api.character && api.character();
     avatar.csig = mySpec ? mySpec.join(".") : "";
-    makeCharacter("you:" + (api.name || ""), function(ch){ avatar.ch = ch; avatar.g.add(ch.o); setAnim(ch, "idle"); }, mySpec);
+    makeCharacter("you:" + (api.name || ""), function(ch){ if(!avatar.ch) putMe(ch); }, mySpec);   // (on the seat if you got on first)
   }
   // Your character changed (Settings): swap the model in place, on the bike if you are riding.
   inst.setCharacter = function(spec){
@@ -680,12 +944,18 @@ function mount(el, api){
     avatar.csig = s;
     makeCharacter("you:" + (api.name || ""), function(ch){
       if(avatar.csig !== s) return;
-      var old = avatar.ch, parent = old && old.o.parent ? old.o.parent : avatar.g;
-      if(old) parent.remove(old.o);
-      avatar.ch = ch; parent.add(ch.o);
-      if(ride) seatRider(ch, true); else setAnim(ch, "idle");
+      var old = avatar.ch;
+      if(old && old.o.parent) old.o.parent.remove(old.o);
+      putMe(ch);
     }, spec);
   };
+  // your character, onto whatever you stand or sit on: the seat of the vehicle you ride (in its pose:
+  // a board stood side-on, a bike or a car seated), else your feet
+  function putMe(ch){
+    avatar.ch = ch;
+    if(ride){ ride.lean.add(ch.o); seatAny(ch, ride.kind, ride.B); }
+    else { avatar.g.add(ch.o); setAnim(ch, "idle"); }
+  }
   // Your name tag, in the name frame you wear (HQ 2.1 cosmetics), else amber.
   function frameHex(v){ return /^#[0-9a-f]{6}$/i.test(v || "") ? v : null; }
   function nameTag(){
@@ -713,17 +983,26 @@ function mount(el, api){
     if(doorsArmed && nd < 1.5){ doorsArmed = false; walkTo = null; through(near); }
   }
   /* ---------- riding a bike or driving a car (Arena City: cur.bikes) ---------- */
-  // cur.bikes lists what you can get on: {g, x, z, yaw, color, kind: "car" | "moto" (else a bicycle), roof}.
-  // ride = {idx, B (what is under you), lean (group you and it sit in), speed, steer, kind, V (VEHICLES[kind]), car}.
-  // Getting off puts it back where it was parked: parked ones are this page's own props, not shared.
+  // cur.bikes lists what you can get on: {g, x, z, yaw, color, kind: "car" | "moto" | "skate" (else a
+  // bicycle), roof, id}. id names the prop across rebuilds of the street (games/hqcity.js).
+  // ride = {idx, id, B (what is under you), lean (group you and it sit in), speed, steer, head (the
+  // way you travel; your yaw is the way you point, and the two part in a powerslide), slip, drift,
+  // gear, rpm, kind, V (VEHICLES[kind]), car}.
+  // Getting off parks it where you are (this page's own props, not shared: everyone else's street
+  // keeps them at home); the rack and the skateboards take theirs back.
   // How each one handles (m/s, m/s²). A bicycle sprints while you hold Shift; a motorbike or a car
   // has an accelerator instead: hold W and it keeps gathering speed up to its top, S brakes then
-  // reverses, Space is the handbrake.
+  // reverses, Space is the handbrake, and Shift with the steering powerslides (slide: from `min`
+  // m/s, turning `turn` times as hard, the tail letting go with `grip`/s of grip, at most `max`
+  // rad sideways, bleeding `bleed` m/s² at full slip). box: half the body's width and length,
+  // inside the street's own allowance for a body (its corners must stay clear of walls).
   var VEHICLES = {
-    bike: {top: 10, sprint: 14, acc: 7, rev: 2.5, lean: 0.32, nose: 0},
-    moto: {top: 24, acc: 9, rev: 3, lean: 0.42, nose: 0.8, motor: true},
-    car:  {top: 22, acc: 6, rev: 5, lean: 0, nose: 1.9, motor: true},
-    skate: {top: 9, acc: 5.5, rev: 0, lean: 0, nose: 0, skate: true}     // its physics: games/hqskate.js
+    bike: {top: 10, sprint: 14, acc: 7, rev: 2.5, lean: 0.32, box: [0, 0.4]},
+    moto: {top: 24, acc: 9, rev: 3, lean: 0.42, box: [0, 0.8], motor: true, gears: [6.5, 11.5, 16, 20.5, 25], eng: "bike",
+           slide: {min: 8, turn: 1.35, grip: 3.2, max: 0.32, bleed: 3}},
+    car:  {top: 22, acc: 6, rev: 5, lean: 0, box: [0.66, 1.66], motor: true, gears: [5, 9.5, 14, 18.5, 23], eng: "turbo",
+           slide: {min: 7, turn: 1.3, grip: 2.2, max: 0.62, bleed: 3.4}},
+    skate: {top: 9, acc: 5.5, rev: 0, lean: 0, box: [0, 0], skate: true}     // its physics: games/hqskate.js
   };
   var ride = null;
   function nearBike(){
@@ -731,12 +1010,46 @@ function mount(el, api){
     var best = -1, bd = 1e9;
     bs.forEach(function(b, i){
       var d = Math.hypot(avatar.x - b.x, avatar.z - b.z);
-      if(b.kind === "car"){                       // a car is long: how far you are from it, nose to tail
+      if(b.kind === "car"){                       // a car is long: how far you are from its side, nose to tail
         var hx = Math.sin(b.yaw), hz = Math.cos(b.yaw), u = E.clamp((avatar.x - b.x)*hx + (avatar.z - b.z)*hz, -1.5, 1.5);
         d = Math.hypot(avatar.x - (b.x + hx*u), avatar.z - (b.z + hz*u)) - 0.9;
+        if(d > 1.2) return;                       // close by its door, not through the garage wall
       }
       if(d < 1.7 && d < bd){ bd = d; best = i; } });
     return best;
+  }
+  // the parked prop you are riding: found by its id, so a rebuilt street (someone opened their HQ
+  // and the lots moved along) still gives back yours, not whatever now sits at its old index
+  function rideProp(){
+    var bs = cur && cur.bikes; if(!bs || !ride) return null;
+    if(ride.id){ for(var i = 0; i < bs.length; i++) if(bs[i].id === ride.id) return bs[i]; return null; }
+    return bs[ride.idx] || null;
+  }
+  // Where you left them (by id), until you leave the page: put back on every rebuild of the street.
+  var parked = {}, propsSeen = null;
+  function placeProp(b, x, z, yaw){
+    var p = b.g.parent; if(!p) return;
+    p.updateMatrixWorld(true);
+    var q = new THREE.Quaternion(), e = new THREE.Euler(0, 0, 0, "YXZ"); p.getWorldQuaternion(q); e.setFromQuaternion(q, "YXZ");
+    var v = p.worldToLocal(new THREE.Vector3(x, 0, z));
+    b.g.position.set(v.x, b.g.position.y, v.z); b.g.rotation.y = yaw - e.y;
+    b.x = x; b.z = z; b.yaw = yaw;
+  }
+  // a point on the street as {u (the HQ whose block it is on), dx, dz}, and back again
+  function anchorOf(w, x, z){
+    var ls = w && w.lots, best = null, bd = 26;
+    (ls || []).forEach(function(L){ var d = Math.max(Math.abs(x - L.x), Math.abs(z - L.z)); if(d < bd){ bd = d; best = {u: L.u, dx: x - L.x, dz: z - L.z}; } });
+    return best;
+  }
+  function anchorAt(w, a){
+    var ls = (w && w.lots) || [];
+    for(var i = 0; i < ls.length; i++) if(ls[i].u === a.u) return {x: ls[i].x + a.dx, z: ls[i].z + a.dz};
+    return null;
+  }
+  function syncProps(){
+    var bs = cur && cur.bikes; if(!bs || bs === propsSeen) return;
+    propsSeen = bs;
+    bs.forEach(function(b){ var p = b.id && parked[b.id]; if(p) placeProp(b, p.x, p.z, p.yaw); });
   }
   /* Skate poses, built from the rig's bones (the characters have no trick clips): a crouch
      (legs bent; your own rider also sits lower), arms out for balance, and the torso twisting into a spin.
@@ -781,34 +1094,127 @@ function mount(el, api){
     if(on){ ch.o.position.set(0, 0.13, 0); ch.o.rotation.set(0, PI/2, 0); setAnim(ch, "idle"); }
     else { ch.o.position.set(0, 0, 0); ch.o.rotation.set(0, 0, 0); setAnim(ch, "idle"); }
   }
-  function seatMoto(ch, on){
-    if(!ch) return;
-    if(on){ ch.o.position.set(0, 0.36, -0.32); ch.o.rotation.set(0.18, 0, 0); setAnim(ch, "sit", 1); }   // leaning on the tank
-    else { ch.o.position.set(0, 0, 0); ch.o.rotation.set(0, 0, 0); setAnim(ch, "idle"); }
+  /* ---------- riders: on the seat, hands on the grips, feet on the pegs ---------- */
+  // The six Mini Characters share one skeleton (model units): the hips 0.176 up, the arms straight out
+  // to the sides at rest (a T), the legs straight down, every bone's rest rotation the identity. A
+  // rider is seated by placing the hips on the vehicle's seat, bending forward at the waist, then
+  // pointing each arm at its grip and each leg at its peg or pedal, every frame after the clips
+  // have run (each limb is one bone, so it is aimed, and stretched or shortened a little to reach).
+  // Seated, everyone is drawn a little smaller (RIDER_K) so the vehicles stay a believable size.
+  var HIP = [0, 0.176, -0.029], RIDER_K = 0.85;
+  var LEG_REST = [0, -0.168, 0.012];
+  function rigOf(ch){
+    if(!ch) return null;
+    if(ch._rig !== undefined) return ch._rig;
+    var o = ch.o, R = {root: o.getObjectByName("root"), t: o.getObjectByName("torso"), h: o.getObjectByName("head"),
+                       la: o.getObjectByName("arm-left"), ra: o.getObjectByName("arm-right"),
+                       ll: o.getObjectByName("leg-left"), rl: o.getObjectByName("leg-right")};
+    if(!(R.root && R.t && R.h && R.la && R.ra && R.ll && R.rl)) return (ch._rig = null);
+    // each arm's reach at rest, from the skin itself: the far end of its hand, in the arm's frame
+    R.lav = armReach(o, R.la) || new THREE.Vector3(0.28, -0.03, 0.03);
+    R.rav = armReach(o, R.ra) || new THREE.Vector3(-0.28, -0.03, 0.03);
+    R.legv = new THREE.Vector3(LEG_REST[0], LEG_REST[1], LEG_REST[2]);
+    return (ch._rig = R);
   }
-  function seatDriver(ch, on){
-    if(!ch) return;
-    if(on){ ch.o.position.set(-0.38, 0.22, -0.2); ch.o.rotation.set(0, 0, 0); setAnim(ch, "sit", 1); }   // right-hand drive
-    else { ch.o.position.set(0, 0, 0); ch.o.rotation.set(0, 0, 0); setAnim(ch, "idle"); }
+  function armReach(o, bone){
+    var tip = null;
+    o.traverse(function(n){
+      if(tip || !n.isSkinnedMesh || !n.skeleton) return;
+      var bi = n.skeleton.bones.indexOf(bone); if(bi < 0) return;
+      var at = new THREE.Vector3().setFromMatrixPosition(new THREE.Matrix4().copy(n.skeleton.boneInverses[bi]).invert());
+      var pos = n.geometry.attributes.position, si = n.geometry.attributes.skinIndex, sw = n.geometry.attributes.skinWeight;
+      if(!pos || !si || !sw) return;
+      var pts = [], far = 0, v = new THREE.Vector3();
+      for(var i = 0; i < pos.count; i++){
+        var best = 0, bb = -1;
+        for(var k = 0; k < 4; k++){ var w = sw.getComponent(i, k); if(w > best){ best = w; bb = si.getComponent(i, k); } }
+        if(bb !== bi) continue;
+        v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).sub(at); var d = v.length();
+        pts.push([v.x, v.y, v.z, d]); if(d > far) far = d;
+      }
+      if(!pts.length) return;
+      var s = new THREE.Vector3(), n2 = 0;
+      pts.forEach(function(p){ if(p[3] > far*0.88){ s.x += p[0]; s.y += p[1]; s.z += p[2]; n2++; } });
+      tip = s.divideScalar(Math.max(1, n2));
+    });
+    return tip && tip.length() > 0.05 ? tip : null;
   }
-  function seatRider(ch, on){
-    if(!ch) return;
-    if(on){ ch.o.position.set(0, 0.56, -0.2); ch.o.rotation.set(0.08, 0, 0); setAnim(ch, "sit", 1); }
-    else { ch.o.position.set(0, 0, 0); ch.o.rotation.set(0, 0, 0); setAnim(ch, "idle"); }
+  var tmpA = null, tmpB = null, tmpQ = null, tmpE = null;
+  // point `bone` (its rest reach `rest`, along `axis`) at the world point `w`, stretching to reach it
+  function aimBone(bone, w, rest, axis, reach, lift){
+    var p = bone.parent.worldToLocal(tmpA.copy(w));
+    if(lift) p.y += lift;
+    p.sub(bone.position);
+    var len = p.length(); if(len < 1e-4) return;
+    bone.quaternion.setFromUnitVectors(tmpB.copy(rest).normalize(), p.divideScalar(len));
+    var k = E.clamp(len/(rest.length()*reach), 0.62, 1.32);
+    bone.scale.set(axis === "x" ? k : 1, axis === "y" ? k : 1, 1);
   }
+  // what sits on top of a character's head (games/avatar3d.js add-ons on the head bone, above the
+  // brow): headwear, a halo, a crest. Glasses and visors stay.
+  function hatsOf(ch){
+    if(ch._hats) return ch._hats;
+    var h = ch.o.getObjectByName("head"), out = [];
+    if(h) h.children.forEach(function(gp){ if(gp.isBone) return; gp.traverse(function(o){ if(o.isMesh && o.position.y > 0.6) out.push(o); }); });
+    return (ch._hats = out);
+  }
+  // Seat a character on vehicle B (or stand them back up: B null).
+  function seatOn(ch, B){
+    if(!ch) return;
+    var R = rigOf(ch), base = ch.base || ch.o.scale.x;
+    ch.base = base;
+    // under a car's roof a hat would poke through it: hats (and halos, crests) come off while you drive
+    var bare = !!(B && B.hats === false);
+    hatsOf(ch).forEach(function(o){ o.visible = !bare; });
+    if(B && B.seat){
+      var s = base*(B.riderK || RIDER_K), p = B.seat.position;
+      ch.o.scale.setScalar(s); ch.o.rotation.set(0, 0, 0);
+      ch.o.position.set(p.x - HIP[0]*s, p.y - HIP[1]*s, p.z - HIP[2]*s);
+      setAnim(ch, "idle");
+      return;
+    }
+    ch.o.scale.setScalar(base); ch.o.position.set(0, 0, 0); ch.o.rotation.set(0, 0, 0);
+    if(R){                                   // back to the rest pose; the clips take it from there
+      [R.t, R.h, R.la, R.ra, R.ll, R.rl].forEach(function(b){ b.quaternion.set(0, 0, 0, 1); b.scale.set(1, 1, 1); });
+      R.root.position.set(0, 0, 0);
+    }
+    setAnim(ch, "idle");
+  }
+  // The riding pose, after the clips have run: `top` is the group the rider and vehicle hang from
+  // (your avatar or a peer); steer -1..1 turns the head and shoulders into the bend.
+  function ridePose(ch, B, steer, top){
+    var R = rigOf(ch); if(!R || !B || !B.seat || !B.grips) return;
+    if(!tmpA){ tmpA = new THREE.Vector3(); tmpB = new THREE.Vector3(); tmpQ = new THREE.Vector3(); tmpE = new THREE.Euler(); }
+    steer = steer || 0;
+    R.root.position.set(0, 0, 0);
+    R.t.quaternion.setFromEuler(tmpE.set(B.lean || 0, steer*0.14, 0));
+    R.h.quaternion.setFromEuler(tmpE.set(-(B.lean || 0)*0.8, steer*0.3, 0));   // eyes up the road, looking into the turn
+    top.updateMatrixWorld(true);
+    aimBone(R.la, B.grips[0].getWorldPosition(tmpQ), R.lav, "x", 0.9, 0);
+    aimBone(R.ra, B.grips[1].getWorldPosition(tmpQ), R.rav, "x", 0.9, 0);
+    aimBone(R.ll, B.feet[0].getWorldPosition(tmpQ), R.legv, "y", 1, 0.02/ (ch.o.scale.y || 1));
+    aimBone(R.rl, B.feet[1].getWorldPosition(tmpQ), R.legv, "y", 1, 0.02/ (ch.o.scale.y || 1));
+  }
+  function seatAny(ch, kind, B){ if(kind === "skate") standSkater(ch, true); else seatOn(ch, B); }
+
   function mount(i){
     var b = cur.bikes && cur.bikes[i]; if(!b || ride) return;
     var lean = new THREE.Group(); avatar.g.add(lean);
     var kind = VEHICLES[b.kind] ? b.kind : "bike", car = kind === "car";
-    var B = car ? carModel(b.color, b.roof) : kind === "moto" ? motoModel(b.color) : kind === "skate" ? boardModel(b.color) : bikeModel(b.color); lean.add(B.g);
-    if(avatar.ch){ lean.add(avatar.ch.o); (car ? seatDriver : kind === "moto" ? seatMoto : kind === "skate" ? standSkater : seatRider)(avatar.ch, true); }
+    var B = car ? carModel(b.color, b.accent) : kind === "moto" ? motoModel(b.color, b.accent) : kind === "skate" ? boardModel(b.color) : bikeModel(b.color, b.accent); lean.add(B.g);
+    if(avatar.ch){ lean.add(avatar.ch.o); seatAny(avatar.ch, kind, B); }
     b.g.visible = false;
     avatar.airborne = false; avatar.vy = 0; avatar.g.position.y = 0;   // getting on mid-hop lands you on the seat
-    if(car){ avatar.x = b.x; avatar.z = b.z; }                        // in the driver's seat, where it is parked
-    ride = {idx: i, B: B, lean: lean, speed: 0, steer: 0, kind: kind, V: VEHICLES[kind], car: car};
+    // you take its place: the seat is where it stands (a car is long, so this matters most there)
+    if(kind !== "skate"){ avatar.x = b.x; avatar.z = b.z; }
+    ride = {idx: i, id: b.id || null, B: B, lean: lean, speed: 0, steer: 0, head: b.yaw, slip: 0, drift: false, gear: 1, rpm: 900,
+            kind: kind, V: VEHICLES[kind], car: car, eng: null};
     if(kind === "skate") skateStart(b);
     avatar.yaw = b.yaw; walkTo = null; walkDoor = null;
-    E.sfx(kind === "bike" ? "bell" : kind === "car" ? "door" : kind === "skate" ? "jump" : "go");
+    movedHere = true;                       // you are somewhere now: a street rebuild must not put you back at your door
+    avatar.g.position.set(avatar.x, 0, avatar.z); avatar.g.rotation.y = avatar.yaw;
+    E.sfx(kind === "bike" ? "bell" : car ? "door" : kind === "skate" ? "jump" : "go");
+    if(kind !== "skate") driveHud(kind);
     rideUiSync(true);
   }
   function dismount(force){
@@ -818,51 +1224,124 @@ function mount(el, api){
       if(st && (st.air || st.grind) && !force) return;               // finish the trick first (E mid-air does nothing)
       avatar.g.position.y = 0; skateHud(null);
     }
-    var b = cur && cur.bikes && cur.bikes[ride.idx]; if(b) b.g.visible = true;    // back in the rack (or its garage)
-    if(avatar.ch){ avatar.g.add(avatar.ch.o); seatRider(avatar.ch, false); }
-    if(ride.car){
-      // step out of the driver's door, else the passenger's, else behind or in front: never
-      // stay where the car stands (it is parked again now, so you could not walk away)
+    var b = rideProp();
+    if(b){
+      // a vehicle from a garage stays where you leave it; the rack's bikes and the boards go home
+      if(b.stay && !force){ parked[b.id] = {x: avatar.x, z: avatar.z, yaw: avatar.yaw}; placeProp(b, avatar.x, avatar.z, avatar.yaw); }
+      b.g.visible = true;
+    }
+    if(avatar.ch){ poseUndo(avatar.ch); avatar.g.add(avatar.ch.o); seatOn(avatar.ch, null); }
+    if(ride.kind !== "skate"){
+      // step off to the side (a car: out of the driver's door, else the passenger's, else behind
+      // or in front), never into a wall or back into the car, which stands here again now
       var cy = Math.cos(avatar.yaw), sy = Math.sin(avatar.yaw);
-      [[-1.4, 0], [1.4, 0], [0, -2.6], [0, 2.6], [-2.4, 0], [2.4, 0]].some(function(o){
+      var offs = ride.car ? [[-1.4, 0], [1.4, 0], [0, -2.6], [0, 2.6], [-2.4, 0], [2.4, 0]] : [[-0.7, 0], [0.7, 0], [0, -1.2], [0, 1.2]];
+      offs.some(function(o){
         var ox = avatar.x + o[0]*cy + o[1]*sy, oz = avatar.z - o[0]*sy + o[1]*cy;
         if(blocked(ox, oz)) return false;
-        avatar.x = ox; avatar.z = oz; avatar.g.position.set(ox, 0, oz); return true;
+        avatar.x = ox; avatar.z = oz; return true;
       });
+      avatar.g.position.set(avatar.x, 0, avatar.z);
     }
     avatar.g.remove(ride.lean);
+    if(ride.eng){ ride.eng.stop(); ride.eng = null; }
     ride = null; doorsArmed = false;
+    driveHud(null);
     rideUiSync(true);
   }
+  // A gamepad, while you ride (standard mapping): left stick steers, RT/LT throttle/brake,
+  // A handbrake, B powerslide (pedal harder on a bicycle).
+  function padNow(){
+    var pads = null; try { pads = navigator.getGamepads ? navigator.getGamepads() : null; } catch(e){ pads = null; }
+    if(!pads) return null;
+    for(var i = 0; i < pads.length; i++){
+      var p = pads[i]; if(!p || !p.connected || !p.buttons) continue;
+      var bv = function(n){ var b = p.buttons[n]; return b ? (typeof b === "object" ? (b.pressed ? Math.max(0.5, b.value || 1) : b.value || 0) : +b || 0) : 0; };
+      var x = p.axes && p.axes.length ? +p.axes[0] || 0 : 0;
+      return {x: Math.abs(x) > 0.18 ? x : 0, thr: bv(7) - bv(6), hand: bv(0) > 0.5, slide: bv(1) > 0.5, use: bv(2) > 0.5};
+    }
+    return null;
+  }
+  // how many of a body's corners (box: half width, half length) stand somewhere blocked, pointing yaw at x, z
+  function bodyHits(x, z, yaw, bx){
+    var w = bx[0], l = bx[1], s = Math.sin(yaw), c = Math.cos(yaw), n = 0;
+    var pts = w ? [[w, l], [-w, l], [w, -l], [-w, -l], [w, 0], [-w, 0], [0, l], [0, -l]] : l ? [[0, l], [0, -l]] : [];
+    if(blocked(x, z)) n++;
+    for(var i = 0; i < pts.length; i++) if(blocked(x + pts[i][0]*c + pts[i][1]*s, z - pts[i][0]*s + pts[i][1]*c)) n++;
+    return n;
+  }
+  function angDiff(a, b){ return Math.atan2(Math.sin(a - b), Math.cos(a - b)); }
   function rideMove(dt){
+    var gp = padNow();
     var thr = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
     var st = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
-    var V = ride.V, top = V.sprint && (keys.ShiftLeft || keys.ShiftRight) ? V.sprint : V.top;
+    var shift = !!(keys.ShiftLeft || keys.ShiftRight), hand = !!keys.Space;
+    if(gp){ thr = E.clamp(thr + gp.thr, -1, 1); st = E.clamp(st - gp.x, -1, 1); shift = shift || gp.slide; hand = hand || gp.hand; }
+    var V = ride.V, top = V.sprint && shift ? V.sprint : V.top;
     walkTo = null; walkDoor = null;
     // an engine pulls hardest from a standstill and less as it nears its top speed
-    var pull = V.motor ? V.acc*Math.max(0.25, 1 - Math.max(0, ride.speed)/top) : V.acc;
-    if(V.motor && keys.Space) ride.speed = ride.speed > 0 ? Math.max(0, ride.speed - 24*dt) : Math.min(0, ride.speed + 24*dt);   // handbrake
+    var pull = (V.motor ? V.acc*Math.max(0.25, 1 - Math.max(0, ride.speed)/top) : V.acc)*Math.max(0, thr);
+    if(V.motor && hand) ride.speed = ride.speed > 0 ? Math.max(0, ride.speed - 24*dt) : Math.min(0, ride.speed + 24*dt);   // handbrake
     else if(thr > 0) ride.speed = Math.min(top, ride.speed + (ride.speed < 0 ? 14 : pull)*dt);
-    else if(thr < 0) ride.speed = Math.max(-V.rev, ride.speed - (ride.speed > 0 ? 14 : 4)*dt);
+    else if(thr < 0) ride.speed = Math.max(-V.rev, ride.speed - (ride.speed > 0 ? 14 : 4)*-thr*dt);
     else ride.speed = ride.speed > 0 ? Math.max(0, ride.speed - (V.motor ? 3 : 2)*dt) : Math.min(0, ride.speed + 4*dt);
     if(ride.speed > top) ride.speed = Math.max(top, ride.speed - 6*dt);
+    if(ride.B.brake) ride.B.brake(!!V.motor && ((thr < 0 && ride.speed > 0.3) || (hand && Math.abs(ride.speed) > 0.3)));   // the brake lights
     ride.steer += (st - ride.steer)*Math.min(1, dt*6);
-    var grip = Math.min(1, Math.abs(ride.speed)/2.5);
-    avatar.yaw += ride.steer*grip*(ride.speed >= 0 ? 1.9 : -1.2)*dt;
-    var d = ride.speed*dt, sy = Math.sin(avatar.yaw), cy = Math.cos(avatar.yaw), nx = avatar.x + sy*d, nz = avatar.z + cy*d;
-    // a car checks its bumper too (the end it is moving towards), so its nose stops at a wall
-    var nose = d >= 0 ? V.nose : -V.nose;
-    if(d && !blocked(nx, nz) && (!nose || !blocked(nx + sy*nose, nz + cy*nose))){ avatar.x = nx; avatar.z = nz; }
-    else if(d){ ride.speed *= -0.2; d = 0; }
+    // the powerslide: Shift (or B) with the steering, fast enough, going forward. It holds while you
+    // keep Shift down and some speed, so you can catch it with opposite lock.
+    var spd = Math.abs(ride.speed), S = V.slide, was = ride.drift;
+    if(S && shift && ride.speed > S.min && (ride.drift || Math.abs(st) > 0.3)) ride.drift = true;
+    else if(!S || !shift || ride.speed < S.min*0.55) ride.drift = false;
+    if(ride.drift && !was) E.sfx("door");          // the tyres let go (a burst of noise: engine.js has no screech)
+    var grip = Math.min(1, spd/2.5), yaw0 = avatar.yaw;
+    avatar.yaw += ride.steer*grip*(ride.speed >= 0 ? 1.9 : -1.2)*(ride.drift ? S.turn : 1)*dt;
+    // the way you travel follows the way you point: at once with grip, slowly in a slide (and
+    // catching up smoothly as the tyres bite again)
+    var slip = angDiff(avatar.yaw, ride.head);
+    if(ride.drift) ride.head += slip*Math.min(1, dt*S.grip);
+    else if(Math.abs(slip) > 0.02) ride.head += slip*Math.min(1, dt*7);
+    else ride.head = avatar.yaw;
+    if(S){ slip = E.clamp(angDiff(avatar.yaw, ride.head), -S.max, S.max); ride.head = avatar.yaw - slip; } else slip = 0;
+    ride.slip = slip;
+    if(ride.drift) ride.speed = Math.max(0, ride.speed - (0.15*ride.speed + Math.abs(Math.sin(slip))*S.bleed/Math.max(0.2, S.max))*dt);
+    var d = ride.speed*dt, sh = Math.sin(ride.head), ch = Math.cos(ride.head), nx = avatar.x + sh*d, nz = avatar.z + ch*d;
+    // the body, every corner of it, stays out of the walls; a body already touching one may still
+    // move or turn as long as that does not push it further in (so nothing is ever stuck)
+    var bx = V.box, now = bodyHits(avatar.x, avatar.z, yaw0, bx);
+    if(d || avatar.yaw !== yaw0){
+      var then = bodyHits(nx, nz, avatar.yaw, bx);
+      if(then === 0 || then < now){ avatar.x = nx; avatar.z = nz; }
+      else {
+        var turnOnly = bodyHits(avatar.x, avatar.z, avatar.yaw, bx);
+        if(!(turnOnly === 0 || turnOnly < now)) avatar.yaw = yaw0;
+        if(d && Math.abs(ride.speed) > 2.5) E.sfx("hit");
+        ride.speed *= -0.2; d = 0; ride.drift = false; ride.head = avatar.yaw; ride.slip = 0;
+      }
+    }
     (ride.kind === "car" ? carRoll : ride.kind === "moto" ? motoRoll : bikeRoll)(ride.B, d, ride.steer);
-    // lean into the turn (and sit up straight in Calm); a car does not lean
-    var lean = E.calm() ? 0 : -ride.steer*Math.min(1, Math.abs(ride.speed)/6)*V.lean;
+    // lean into the turn, a slide leans further (and sit up straight in Calm); a car does not lean
+    var lean = E.calm() ? 0 : (-ride.steer*Math.min(1, spd/6) - ride.slip*1.2)*V.lean;
     ride.lean.rotation.z += (lean - ride.lean.rotation.z)*Math.min(1, dt*8);
-    if(avatar.ch) setAnim(avatar.ch, "sit", 1);
-    keyMove = Math.abs(ride.speed) > 0.3; keyRun = false; if(keyMove){ movedHere = true; walkInto(); }
+    engineStep(dt, thr);
+    keyMove = spd > 0.3; keyRun = false; if(keyMove){ movedHere = true; walkInto(); }
     avatar.g.position.set(avatar.x, 0, avatar.z); avatar.g.rotation.y = avatar.yaw;
-    var b = cur.bikes && cur.bikes[ride.idx]; if(b && b.g.visible) b.g.visible = false;   // the street rebuilt under you
+    var b = rideProp(); if(b && b.g.visible) b.g.visible = false;   // the street rebuilt under you
     view.goal.set(avatar.x*(cur.follow || 1), cur.camY || 1.4, avatar.z*(cur.follow || 1));
+  }
+  // An automatic gearbox and the engine note (games/engine.js engineSound), for the HUD's rev
+  // counter and your ears: revs climb through each gear and drop as it changes up; a slide spins
+  // the wheels up a little.
+  function engineStep(dt, thr){
+    var V = ride.V; if(!V.motor){ ride.gear = 0; return; }
+    var G = V.gears, v = Math.abs(ride.speed), g = Math.max(1, Math.min(G.length, ride.gear | 0 || 1));
+    if(v > G[g - 1]*0.98 && g < G.length) g++;
+    else if(g > 1 && v < G[g - 2]*0.78) g--;
+    ride.gear = ride.speed < -0.3 ? -1 : g;
+    var top = G[g - 1], tgt = 900 + 6600*E.clamp(v/top, 0, 1) + (thr > 0 ? 500*thr : 0) + (ride.drift ? 900 : 0);
+    ride.rpm += (Math.min(7800, tgt) - ride.rpm)*(1 - Math.exp(-dt*8));
+    if(!ride.eng && E.engineSound) ride.eng = E.engineSound(V.eng);
+    if(ride.eng) ride.eng.set(ride.rpm);
   }
   /* ---------- skating (games/hqskate.js does the physics) ---------- */
   // ride.sk = {st (the sim's state, in the park's frame), cx, cz (the park's centre), prev (keys last frame)}
@@ -903,7 +1382,7 @@ function mount(el, api){
     }
     B.wheels.forEach(function(w){ w.rotation.x += st.speed*dt/0.03; });
     keyMove = Math.abs(st.speed) > 0.3 || st.air; keyRun = false; if(keyMove){ movedHere = true; walkInto(); }
-    var b = cur.bikes && cur.bikes[ride.idx]; if(b && b.g.visible) b.g.visible = false;
+    var b = rideProp(); if(b && b.g.visible) b.g.visible = false;
     view.goal.set(avatar.x*(cur.follow || 1), (cur.camY || 1.4) + st.y*0.7, avatar.z*(cur.follow || 1));
     sk.t += dt; if(sk.t > 0.25){ sk.t = 0; skateHudCombo(st); }
   }
@@ -967,15 +1446,149 @@ function mount(el, api){
   }
   var RIDE_HELP = {
     bike: "W / S: pedal and brake · A / D: steer · Shift: pedal harder · E: get off",
-    moto: "W: throttle (hold it to keep speeding up) · S: brake, then reverse · A / D: steer · Space: handbrake · E: get off",
-    car: "W: accelerator (hold it to keep speeding up) · S: brake, then reverse · A / D: steer · Space: handbrake · E: get out",
+    moto: "W: throttle (hold it to keep speeding up) · S: brake, then reverse · A / D: steer · Shift + steer: slide the back wheel · Space: handbrake · E: get off",
+    car: "W: accelerator (hold it to keep speeding up) · S: brake, then reverse · A / D: steer · Shift + steer: powerslide · Space: handbrake · E: get out",
     skate: "W: push · S: brake · A / D: carve (in the air: spin) · Space: ollie · F: kickflip · G: shove-it · E: step off"
+  };
+  // the one-line version under the driving HUD
+  var RIDE_HINT = {
+    bike: "W pedal · S brake · A/D steer · Shift pedal harder · E get off",
+    moto: "W throttle · S brake · A/D steer · Shift+steer slide · Space handbrake · E get off",
+    car: "W go · S brake · A/D steer · Shift+steer powerslide · Space handbrake · E get out"
   };
   function tipRide(){ if(!api.announce || !ride) return;
     if(ride.kind === "skate") return;                                 // the skate HUD says how
-    api.announce(ride.kind === "car" ? "In the car. Hold W to accelerate, S brakes and reverses, A and D steer, Space is the handbrake, E gets out."
-      : ride.kind === "moto" ? "On the motorbike. Hold W for throttle, S brakes, A and D steer, Space is the handbrake, E gets off."
+    api.announce(ride.kind === "car" ? "In the car. Hold W to accelerate, S brakes and reverses, A and D steer, hold Shift while steering to powerslide, Space is the handbrake, E gets out."
+      : ride.kind === "moto" ? "On the motorbike. Hold W for throttle, S brakes, A and D steer, hold Shift while steering to slide, Space is the handbrake, E gets off."
       : "On the bike. W and S pedal and brake, A and D steer, Shift pedals harder, E gets off."); }
+
+  /* ---------- the driving HUD: speed and revs, Kart Racing's gauges (games/kart.js) ---------- */
+  // While you ride: a speedometer (km/h) and, with an engine, a rev counter with the gear in it,
+  // plus the keys. The dials are drawn in the theme's colours (engine.js tokens); in Calm (and with
+  // reduced motion) the moving dials give way to a plain readout. Decorative to screen readers:
+  // tipRide() announces the keys, and the speed is not worth a running commentary.
+  var hud = null;
+  var HUD_MAX = {bike: [60, 10, 5], moto: [120, 20, 10], car: [120, 20, 10]};   // the speed dial: max, major, minor
+  function driveHud(kind){
+    if(hud){ if(hud.el.parentNode) hud.el.parentNode.removeChild(hud.el); hud = null; }
+    if(!kind || !HUD_MAX[kind]) return;
+    if(!document.getElementById("valleyCss")){      // its styles live with the games' (the Valley loads the same sheet)
+      var l = document.createElement("link"); l.id = "valleyCss"; l.rel = "stylesheet"; l.href = "/games/games.css"; document.head.appendChild(l);
+    }
+    var d = document.createElement("div"); d.className = "hq3d-drive hq3d-drive-" + kind; d.setAttribute("aria-hidden", "true");
+    var slide = document.createElement("span"); slide.className = "hq3d-drive-slide"; slide.textContent = kind === "moto" ? "Slide" : "Powerslide";
+    var cv = document.createElement("canvas"); cv.className = "hq3d-drive-dial";
+    var read = document.createElement("div"); read.className = "hq3d-drive-read";
+    var hint = document.createElement("div"); hint.className = "hq3d-drive-hint"; hint.textContent = RIDE_HINT[kind];
+    [slide, cv, read, hint].forEach(function(n){ d.appendChild(n); });
+    ((rideUi && rideUi.parentNode) || el).appendChild(d);
+    hud = {el: d, cv: cv, read: read, kind: kind, tok: null, tokAt: -9, at: -9, txt: "", sl: false};
+  }
+  function gearTxt(g){ return g < 0 ? "R" : g === 0 ? "N" : String(g); }
+  function driveHudDraw(t){
+    if(!hud || !ride || t - hud.at < 1/30) return;
+    hud.at = t;
+    var kmh = Math.abs(ride.speed)*3.6, motor = !!ride.V.motor, gear = motor ? (Math.abs(ride.speed) < 0.3 && ride.gear > 0 ? 0 : ride.gear) : 0;
+    var txt = Math.round(kmh) + " km/h" + (motor ? "  ·  gear " + gearTxt(gear) : "");
+    if(txt !== hud.txt){ hud.txt = txt; hud.read.textContent = txt; }
+    if(!!ride.drift !== hud.sl){ hud.sl = !!ride.drift; hud.el.classList.toggle("sliding", hud.sl); }
+    if(E.calm()) return;                              // no moving needles (CSS shows the readout instead)
+    if(!hud.tok || t - hud.tokAt > 2){ hud.tok = E.tokens(); hud.tokAt = t; }
+    var cv = hud.cv, dpr = Math.min(window.devicePixelRatio || 1, 2), W = motor ? 236 : 124, H = 124;
+    if(cv.width !== Math.round(W*dpr)){ cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr); }
+    var g = cv.getContext("2d"), M = HUD_MAX[hud.kind]; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    driveDial(g, hud.tok, 62, 64, 54, kmh, M[0], M[1], M[2], "km/h", Math.round(kmh), null);
+    if(motor) driveDial(g, hud.tok, 174, 64, 54, ride.rpm/1000, 8, 1, 0.5, "×1000 rpm", gearTxt(gear), 6.5, "GEAR");
+  }
+  // one round dial: Kart Racing's (games/kart.js dial()), the label under the needle's hub
+  function driveDial(g, T, cx, cy, r, val, max, major, minor, unit, label, red, cap){
+    var a0 = PI*0.75, a1 = PI*2.25;
+    function ang(v){ return a0 + (a1 - a0)*E.clamp(v/max, 0, 1); }
+    g.beginPath(); g.arc(cx, cy, r, 0, PI*2); g.fillStyle = T.panel; g.globalAlpha = 0.9; g.fill(); g.globalAlpha = 1;
+    g.lineWidth = 1.5; g.strokeStyle = T.line; g.stroke();
+    if(red != null){ g.beginPath(); g.arc(cx, cy, r - 7, ang(red), a1); g.lineWidth = 6; g.strokeStyle = T.need; g.stroke(); }
+    g.lineCap = "round";
+    for(var v = 0; v <= max + 1e-6; v += minor){
+      var isMaj = Math.abs(v/major - Math.round(v/major)) < 1e-6, a = ang(v), r1 = r - 4, r2 = r - (isMaj ? 13 : 9);
+      g.beginPath(); g.moveTo(cx + Math.cos(a)*r1, cy + Math.sin(a)*r1); g.lineTo(cx + Math.cos(a)*r2, cy + Math.sin(a)*r2);
+      g.lineWidth = isMaj ? 2 : 1; g.strokeStyle = red != null && v >= red ? T.need : T.muted; g.stroke();
+      if(isMaj){
+        g.fillStyle = T.muted; g.font = "600 9px " + T.mono; g.textAlign = "center"; g.textBaseline = "middle";
+        g.fillText(String(Math.round(v)), cx + Math.cos(a)*(r - 22), cy + Math.sin(a)*(r - 22));
+      }
+    }
+    var an = ang(val);
+    g.beginPath(); g.moveTo(cx - Math.cos(an)*6, cy - Math.sin(an)*6); g.lineTo(cx + Math.cos(an)*(r - 8), cy + Math.sin(an)*(r - 8));
+    g.lineWidth = 3; g.strokeStyle = red != null && val >= red ? T.need : T.brand; g.stroke();
+    g.beginPath(); g.arc(cx, cy, 4, 0, PI*2); g.fillStyle = T.ink; g.fill();
+    g.fillStyle = T.ink; g.font = "700 16px " + T.mono; g.textAlign = "center"; g.textBaseline = "alphabetic";
+    g.fillText(String(label), cx, cy + r*0.55);
+    g.fillStyle = T.muted; g.font = "600 8px " + T.mono; g.fillText(unit, cx, cy + r*0.55 + 11);
+    if(cap) g.fillText(cap, cx, cy + r*0.55 - 16);                 // what the big label is (the gear, on the rev counter)
+  }
+
+  /* ---------- skid marks and tyre smoke in a slide ---------- */
+  // Marks: flat dark quads on the road behind the back wheels, a ring of them reused (they stay
+  // until overwritten; a still mark is no animation, so Calm keeps them). Smoke: soft grey puffs
+  // that swell and fade (not in Calm). Both live in the scene you drive in, rebuilt with it.
+  var fx = null, FX_MARKS = 220, FX_PUFFS = 36;
+  function fxOf(){
+    var sc = cur && cur.scene; if(!sc) return null;
+    if(fx && fx.scene === sc) return fx;
+    fxClear();
+    if(!tex.smoke){
+      tex.smoke = canvasTex(64, 64, function(g2){ var rg = g2.createRadialGradient(32, 32, 0, 32, 32, 32);
+        rg.addColorStop(0, "rgba(220,224,230,.9)"); rg.addColorStop(0.5, "rgba(200,205,212,.45)"); rg.addColorStop(1, "rgba(200,205,212,0)");
+        g2.fillStyle = rg; g2.fillRect(0, 0, 64, 64); }).t;
+    }
+    fx = {scene: sc, marks: [], mi: 0, puffs: [], pi: 0, at: 0, last: [null, null],
+          mm: new THREE.MeshBasicMaterial({color: 0x101214, transparent: true, opacity: 0.5, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2}),
+          geo: new THREE.PlaneGeometry(1, 1)};
+    return fx;
+  }
+  function fxClear(){
+    if(!fx) return;
+    fx.marks.forEach(function(m){ if(m.parent) m.parent.remove(m); });
+    fx.puffs.forEach(function(p){ if(p.sp.parent) p.sp.parent.remove(p.sp); p.sp.material.dispose(); });
+    fx.mm.dispose(); fx.geo.dispose(); fx = null;
+  }
+  // a mark from the last spot of wheel w to (x, z)
+  function fxMark(F, w, x, z, width){
+    var L = F.last[w]; F.last[w] = {x: x, z: z};
+    if(!L) return;
+    var dx = x - L.x, dz = z - L.z, len = Math.hypot(dx, dz); if(len < 0.05 || len > 2) return;
+    var m = F.marks[F.mi];
+    if(!m){ m = new THREE.Mesh(F.geo, F.mm); m.rotation.order = "YXZ"; m.renderOrder = 1; F.marks[F.mi] = m; }
+    if(m.parent !== F.scene) F.scene.add(m);
+    m.position.set((x + L.x)/2, 0.066, (z + L.z)/2); m.rotation.set(-PI/2, Math.atan2(dx, dz), 0); m.scale.set(width, len + 0.04, 1);
+    F.mi = (F.mi + 1) % FX_MARKS;
+  }
+  function fxPuff(F, x, z, t){
+    var p = F.puffs[F.pi];
+    if(!p){ p = F.puffs[F.pi] = {sp: new THREE.Sprite(new THREE.SpriteMaterial({map: tex.smoke, transparent: true, depthWrite: false, opacity: 0}))}; }
+    if(p.sp.parent !== F.scene) F.scene.add(p.sp);
+    p.t0 = t; p.x = x; p.z = z; p.sp.position.set(x, 0.3, z); p.sp.scale.set(0.5, 0.5, 1); p.sp.visible = true;
+    F.pi = (F.pi + 1) % FX_PUFFS;
+  }
+  function fxStep(t, dt){
+    var sliding = ride && ride.drift && Math.abs(ride.speed) > 3 && Math.abs(ride.slip) > 0.08;
+    if(!fx && !sliding) return;
+    var F = fxOf(); if(!F) return;
+    if(sliding){
+      // the back wheels, in the world: under the body (your yaw), behind the seat
+      var s = Math.sin(avatar.yaw), c = Math.cos(avatar.yaw), car = ride.car;
+      var wh = car ? [[CAR_WX, -CAR_WZ], [-CAR_WX, -CAR_WZ]] : [[0, -MOTO_WB/2*MOTO_S]];
+      wh.forEach(function(w, i){ fxMark(F, i, avatar.x + w[0]*c + w[1]*s, avatar.z - w[0]*s + w[1]*c, car ? 0.24 : 0.14); });
+      F.at += dt;
+      if(F.at > 0.05 && !E.calm()){ F.at = 0; wh.forEach(function(w){ fxPuff(F, avatar.x + w[0]*c + w[1]*s, avatar.z - w[0]*s + w[1]*c, t); }); }
+    } else F.last = [null, null];
+    F.puffs.forEach(function(p){
+      if(!p.sp.visible) return;
+      var age = t - p.t0;
+      if(age > 0.9 || E.calm()){ p.sp.visible = false; return; }
+      var k = 0.5 + age*2.4; p.sp.scale.set(k, k, 1); p.sp.position.y = 0.3 + age*0.7; p.sp.material.opacity = 0.5*(1 - age/0.9);
+    });
+  }
   function rideToggle(){ if(ride) dismount(); else { var i = nearBike(); if(i >= 0) mount(i); } }
 
   function moveAvatar(dt){
@@ -998,7 +1611,9 @@ function mount(el, api){
     keyMove = !!(vx || vz); keyRun = !!run; if(keyMove) movedHere = true;
     if(vx || vz){
       var nx = avatar.x + vx*sp, nz = avatar.z + vz*sp;
-      if(!blocked(nx, nz)){ avatar.x = nx; avatar.z = nz; }
+      // standing somewhere blocked already (a car parked over you, a street rebuilt round you):
+      // any step is allowed, so you can always walk out
+      if(!blocked(nx, nz) || blocked(avatar.x, avatar.z)){ avatar.x = nx; avatar.z = nz; }
       else if(!blocked(nx, avatar.z)) avatar.x = nx;
       else if(!blocked(avatar.x, nz)) avatar.z = nz;
       else if(walkTo){ walkTo = null; walkDoor = null; }
@@ -1122,6 +1737,7 @@ function mount(el, api){
     if(e.code.indexOf("Shift") < 0) e.preventDefault();
   }
   function onBlur(){ keys = {}; }
+  var padUse = false;
 
   /* ---------- the loop ---------- */
   function frame(ts){
@@ -1129,17 +1745,25 @@ function mount(el, api){
     raf = requestAnimationFrame(frame);
     var t = E.now() - clock0, dt = Math.min(0.05, last ? t - last : 0); last = t;
     var k = E.calm() ? 0.25 : 1;
+    syncProps();
+    // a gamepad's X gets on and off, like E (only near something to ride, or riding)
+    var gpu = cur && cur.bikes ? padNow() : null, use = !!(gpu && gpu.use);
+    if(use && !padUse && (ride || nearBike() >= 0)) rideToggle();
+    padUse = use;
     moveAvatar(dt);
     rideUiSync(false);
-    var ease = 1 - Math.exp(-dt*4); view.target.lerp(view.goal, ease);
+    // the camera keeps up better the faster you go (a car at full speed stays on screen)
+    var ease = 1 - Math.exp(-dt*(ride ? 4 + Math.min(6, Math.abs(ride.speed)*0.3) : 4)); view.target.lerp(view.goal, ease);
     resize(); placeCam();
     if(avatar && avatar.ch){
       var skp = ride && ride.kind === "skate" && ride.sk ? ride.sk.pose : null;
       if(skp || avatar.ch._po) poseUndo(avatar.ch);
       avatar.ch.mixer.update(dt); if(avatar.ch.update) avatar.ch.update(t);
+      if(ride && ride.kind !== "skate" && avatar.ch.o.parent === ride.lean) ridePose(avatar.ch, ride.B, ride.steer, avatar.g);
       if(skp) poseApply(avatar.ch, skp);                               // Calm: no pose (skp is null)
     }
     placePeers(dt, t);
+    fxStep(t, dt); driveHudDraw(t);
     acc.sky += dt; if(acc.sky > 30){ acc.sky = 0; applyTime(); }
     if(cur !== worlds.mission){ if(cur.update) cur.update(t, dt, k); renderer.render(cur.scene, cam); return; }
     acc.scr += dt; acc.wall += dt;
@@ -1183,7 +1807,14 @@ function mount(el, api){
   // The list of open HQs changed: the city street rebuilds.
   inst.cityChanged = function(){
     if(!worlds.city || !worlds.city.onCity) return;
-    worlds.city.onCity();
+    var C = worlds.city, here = cur === C && avatar ? anchorOf(C, avatar.x, avatar.z) : null;
+    var pk = {}; Object.keys(parked).forEach(function(id){ var p = parked[id]; pk[id] = anchorOf(C, p.x, p.z); });
+    C.onCity();
+    // someone opened or closed their HQ and the blocks moved: you, and anything you parked, move
+    // with the block you were on (else you could be standing inside what is built there now)
+    if(here){ var w = anchorAt(C, here); if(w){ var dx = w.x - avatar.x, dz = w.z - avatar.z; avatar.x = w.x; avatar.z = w.z; view.target.x += dx; view.target.z += dz; } }
+    Object.keys(pk).forEach(function(id){ var w2 = pk[id] && anchorAt(C, pk[id]); if(w2){ parked[id].x = w2.x; parked[id].z = w2.z; } });
+    propsSeen = null;
     // the street filled in after you arrived and you have not moved yet: stand at your door
     if(cur === worlds.city && !movedHere && cur.spawn){ avatar.x = cur.spawn.x; avatar.z = cur.spawn.z; avatar.yaw = cur.spawn.yaw || 0; if(cur.spawn.camYaw != null) view.yaw = cur.spawn.camYaw; moveAvatar(0); view.target.copy(view.goal); }
   };
@@ -1211,8 +1842,8 @@ function mount(el, api){
         makeCharacter("peer:" + p.u, function(ch){
           if(peers[p.u] !== P || P.csig !== cs) return;
           if(P.ch && P.ch.o.parent) P.ch.o.parent.remove(P.ch.o);
-          P.ch = ch; (P.bike && P.lean ? P.lean : P.g).add(ch.o);
-          if(P.bike) seatRider(ch, true);
+          P.ch = ch; (P.lean || P.g).add(ch.o);
+          if(P.board) standSkater(ch, true); else if(P.bike) seatOn(ch, P.bike);
         }, Array.isArray(p.c) ? p.c : null);
       }
       P.w = p.w; P.tx = p.x/100; P.tz = p.z/100; P.tyaw = p.r*PI/180; P.a = p.a | 0; P.k = p.k | 0; P.y = Math.max(0, Math.min(60, p.y | 0));
@@ -1221,7 +1852,6 @@ function mount(el, api){
   };
   // what another player is on, from their presence `a`, and how they sit on it
   var PEER_VEHICLE = {3: "bike", 5: "car", 6: "moto"};
-  var PEER_SEAT = {bike: seatRider, car: seatDriver, moto: seatMoto};
   function placePeers(dt, t){
     Object.keys(peers).forEach(function(u){
       var P = peers[u], here = cur && P.w === cur.name;
@@ -1255,19 +1885,32 @@ function mount(el, api){
       }
       // on wheels: a bike (3), a car (5) or a motorbike (6), in their colour, them in its seat
       var vk = PEER_VEHICLE[P.a] || null;
-      if(P.bike && P.vkind !== vk){ if(P.ch){ P.g.add(P.ch.o); PEER_SEAT[P.vkind](P.ch, false); } P.g.remove(P.lean); P.bike = null; P.lean = null; P.vkind = null; }
+      if(P.bike && P.vkind !== vk){ if(P.ch){ P.g.add(P.ch.o); seatOn(P.ch, null); } P.g.remove(P.lean); P.bike = null; P.lean = null; P.vkind = null; }
       if(vk && !P.bike){
-        P.lean = new THREE.Group(); P.g.add(P.lean); P.vkind = vk;
-        P.bike = vk === "car" ? carModel(bikeColor(u), 0x2a3c50) : vk === "moto" ? motoModel(bikeColor(u)) : bikeModel(bikeColor(u));
-        P.lean.add(P.bike.g); if(P.ch){ P.lean.add(P.ch.o); PEER_SEAT[vk](P.ch, true); }
+        P.lean = new THREE.Group(); P.g.add(P.lean); P.vkind = vk; P.steer = 0;
+        P.bike = vk === "car" ? carModel(bikeColor(u)) : vk === "moto" ? motoModel(bikeColor(u)) : bikeModel(bikeColor(u));
+        P.lean.add(P.bike.g); if(P.ch){ P.lean.add(P.ch.o); seatOn(P.ch, P.bike); }
       }
       if(P.bike){
-        if(P.ch && P.ch.o.parent !== P.lean){ P.lean.add(P.ch.o); PEER_SEAT[vk](P.ch, true); }   // the character loaded after they got on
+        if(P.ch && P.ch.o.parent !== P.lean){ P.lean.add(P.ch.o); seatOn(P.ch, P.bike); }   // the character loaded after they got on
         var mv = Math.hypot(P.x - (P.px == null ? P.x : P.px), P.z - (P.pz == null ? P.z : P.pz));
-        (vk === "car" ? carRoll : vk === "moto" ? motoRoll : bikeRoll)(P.bike, jump ? 0 : mv, null);
+        // how hard they steer, read from how fast they turn (presence carries no steering): the bars,
+        // the wheels and their lean into the bend follow it
+        var dyaw = P.pyaw == null ? 0 : Math.atan2(Math.sin(P.yaw - P.pyaw), Math.cos(P.yaw - P.pyaw)), v = dt > 0 ? mv/dt : 0;
+        var want = !jump && v > 0.5 && dt > 0 ? E.clamp(dyaw/dt/(1.9*Math.min(1, v/2.5)), -1, 1) : 0;
+        P.steer += (want - P.steer)*Math.min(1, dt*6);
+        (vk === "car" ? carRoll : vk === "moto" ? motoRoll : bikeRoll)(P.bike, jump ? 0 : mv, P.steer);
+        var pl = E.calm() || vk === "car" ? 0 : -P.steer*Math.min(1, v/6)*VEHICLES[vk].lean;
+        P.lean.rotation.z += (pl - P.lean.rotation.z)*Math.min(1, dt*8);
+        // their brake lights, when they slow down hard (held a moment, so they do not flicker)
+        if(P.pv != null && dt > 0 && (P.pv - v)/dt > 3 && v > 0.5) P.brakeT = 0.4; else P.brakeT = (P.brakeT || 0) - dt;
+        P.pv = v; if(P.bike.brake) P.bike.brake(P.brakeT > 0);
       }
-      P.px = P.x; P.pz = P.z;
-      if(P.ch){ setAnim(P.ch, vk ? "sit" : P.a === 2 ? "sprint" : P.a === 1 ? "walk" : "idle"); P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0); }
+      P.px = P.x; P.pz = P.z; P.pyaw = P.yaw;
+      if(P.ch){
+        setAnim(P.ch, vk ? "idle" : P.a === 2 ? "sprint" : P.a === 1 ? "walk" : "idle"); P.ch.mixer.update(dt); if(P.ch.update) P.ch.update(t || 0);
+        if(P.bike && P.ch.o.parent === P.lean) ridePose(P.ch, P.bike, P.steer, P.g);
+      }
     });
   }
   // 0 still, 1 walk, 2 run, 3 on a bike (any speed: others draw you riding), 4 on a skateboard,
@@ -1277,6 +1920,8 @@ function mount(el, api){
   // on a board: what others should see you doing ({k, y}); null otherwise
   inst.skate = function(){ return ride && ride.kind === "skate" ? skateNet() : null; };
   inst.riding = function(){ return !!ride; };
+  // read-only, for the HUD's tests and tools: what you are driving and how
+  inst.drive = function(){ return ride ? {kind: ride.kind, speed: ride.speed, slip: ride.slip, drift: !!ride.drift, gear: ride.gear, rpm: Math.round(ride.rpm)} : null; };
 
   inst._place = function(x, z){ if(avatar){ avatar.x = x; avatar.z = z; } };    // for tests
   // read-only: the scene of the world you stand in (tests and tools traverse it)
@@ -1289,13 +1934,14 @@ function mount(el, api){
     if(k !== streamKey){ streamKey = k; buildStreams(); applyFilter(); }
   }
   inst.setFilter = function(p){ filter = p || null; if(scene) applyFilter(); };
-  inst.pause = function(){ inst.running = false; keys = {}; if(raf){ cancelAnimationFrame(raf); raf = 0; } };
+  inst.pause = function(){ inst.running = false; keys = {}; if(raf){ cancelAnimationFrame(raf); raf = 0; }
+    if(ride && ride.eng){ ride.eng.stop(); ride.eng = null; } };     // (the engine starts again with the next frame you drive)
   inst.resume = function(){
     if(!inst.alive || inst.running || !scene) { if(!scene) inst.wantRun = true; return; }
     inst.running = true; last = 0; applyTime(); raf = requestAnimationFrame(frame);
   };
   inst.destroy = function(){
-    inst.alive = false; inst.pause();
+    inst.alive = false; inst.pause(); driveHud(null);
     window.removeEventListener("keydown", onKey, true); window.removeEventListener("keyup", onKey, true); window.removeEventListener("blur", onBlur);
     if(renderer){ renderer.dispose(); }
     el.textContent = "";

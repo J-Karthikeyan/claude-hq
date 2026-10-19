@@ -720,3 +720,22 @@ html.hq-calm .bowl-flash.on{opacity:1}
   .vg-rally-slab{min-width:140px}
   .vg-rally-stand{display:none}
 }
+/* ==== Arena City driving HUD (games/hq3d.js driveHud): while in a car or on a bike ====
+   Kart Racing's speed + rev dials (drawn from the theme tokens), a "Powerslide" chip while
+   sliding, and the keys. In Calm / reduced motion the moving dials give way to a plain readout. */
+.hq3d-drive{position:absolute;right:12px;bottom:12px;z-index:4;display:flex;flex-direction:column;align-items:flex-end;gap:6px;
+  pointer-events:none;max-width:calc(100% - 24px)}
+.hq3d-drive-dial{display:block;width:236px;height:124px}
+.hq3d-drive-bike .hq3d-drive-dial{width:124px}
+.hq3d-drive-read{display:none;font:700 14px/1.2 var(--mono);color:var(--ink);background:color-mix(in srgb,var(--panel) 88%,transparent);
+  border:1px solid var(--line);border-radius:999px;padding:6px 12px}
+.hq3d-drive-hint{font-size:12px;line-height:1.35;color:var(--muted);background:color-mix(in srgb,var(--panel) 82%,transparent);
+  border:1px solid var(--line);border-radius:var(--radius-sm);padding:4px 10px;text-align:right}
+.hq3d-drive-slide{visibility:hidden;font:800 12px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--bg);
+  background:var(--brand);border-radius:999px;padding:5px 10px}
+.hq3d-drive.sliding .hq3d-drive-slide{visibility:visible}
+html.hq-calm .hq3d-drive-dial{display:none}
+html.hq-calm .hq3d-drive-read{display:block}
+@media (prefers-reduced-motion: reduce){ .hq3d-drive-dial{display:none} .hq3d-drive-read{display:block} }
+@media (max-width:560px){ .hq3d-drive-dial{width:170px;height:89px} .hq3d-drive-bike .hq3d-drive-dial{width:89px} .hq3d-drive-hint{font-size:11px} }
+/* ==== end of the Arena City driving HUD ==== */
