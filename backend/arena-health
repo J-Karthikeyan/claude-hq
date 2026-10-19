@@ -1,4 +1,0 @@
-#!/bin/sh
-# Container healthcheck, the same command in both Arena images (this one is the
-# Python image's; backend-rs/Dockerfile maps it to `arena --health`).
-exec python -c "import urllib.request,json,sys;r=urllib.request.urlopen('http://127.0.0.1:${ARENA_BIND_PORT:-8080}/health',timeout=5);sys.exit(0 if json.load(r).get('ok') else 1)"
