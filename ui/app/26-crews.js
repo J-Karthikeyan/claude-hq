@@ -22,7 +22,6 @@ function crewLoad(){
     crewSetMine(res[0].j.crew);
     if(CREW.mine) crewRenderMine(box, CREW.mine); else crewRenderJoin(box);
     crewRenderBoard(box, (res[1].ok && res[1].j.crews) || []);
-    acctLoad(box);
   });
 }
 function crewMsg(box, t){ var m=box.querySelector(".crew-msg"); if(!m){ m=document.createElement("p"); m.className="crew-msg muted"; m.setAttribute("aria-live","polite"); box.insertBefore(m, box.firstChild); } m.textContent=t; }
@@ -69,43 +68,6 @@ function crewRenderBoard(box, list){
   var head=document.createElement("tr"); ["#","Crew","Level","Members","XP"].forEach(function(c){ var th=document.createElement("th"); th.textContent=c; head.appendChild(th); }); t.appendChild(head);
   list.forEach(function(c){ var tr=document.createElement("tr"); if(c.isMine) tr.className="you";
     [c.rank, "["+c.tag+"] "+c.name, c.level, c.members.length, c.xp.toLocaleString()].forEach(function(v, i){ var td=document.createElement("td"); td.textContent=String(v); if(i===1) td.style.borderLeft="3px solid "+c.color; tr.appendChild(td); });
-    t.appendChild(tr); });
-  var w=document.createElement("div"); w.className="gb-scroll"; w.appendChild(t); box.appendChild(w);
-}
-
-/* ---- HQ 2.6: account board ----
-   People signed into the same Claude account (opt-in, Settings > Account board) share a row.
-   Only a one-way hash of the account id reaches the Arena; rows carry public handles and levels. */
-function acctLoad(box){
-  Promise.all([crewGet("/api/arena/accounts/mine"), crewGet("/api/arena/accounts")]).then(function(res){
-    if(!res[1].ok) return;   // an Arena without the board (404) or unpaired: show nothing
-    acctRender(box, (res[0].ok && res[0].j.accounts) || [], res[1].j.accounts || []);
-  });
-}
-function acctNames(a){
-  var ms=(a && a.members) || [];
-  var s=ms.map(function(m){ return m.displayName||m.handle; }).join(", ");
-  var more=Math.max(0, (a.memberCount|0) - ms.length);
-  return more ? s+" +"+more : s;
-}
-function acctRender(box, mine, list){
-  var h=document.createElement("h4"); h.className="gb-key"; h.textContent="Account board"; box.appendChild(h);
-  var on=(typeof CONFIG!=="undefined" && CONFIG && CONFIG.arenaAccountBoard===true);
-  if(mine.length){
-    mine.forEach(function(a){ var p=document.createElement("p"); p.className="muted";
-      p.textContent="Your account: #"+a.rank+" · level "+a.level+" · "+a.memberCount+" people ("+acctNames(a)+")"; box.appendChild(p); });
-  } else {
-    var p=document.createElement("p"); p.className="muted";
-    p.textContent = on ? "Nobody else on your Claude account has joined yet: they appear here after their next publish."
-                       : "Turn on Settings › Account board to share a spot with people on your Claude account.";
-    box.appendChild(p);
-  }
-  if(!list.length) return;
-  var t=document.createElement("table"); t.className="gb-table";
-  var cap=document.createElement("caption"); cap.className="sr-only"; cap.textContent="Account board"; t.appendChild(cap);
-  var head=document.createElement("tr"); ["#","People","Level","Members","XP"].forEach(function(c){ var th=document.createElement("th"); th.scope="col"; th.textContent=c; head.appendChild(th); }); t.appendChild(head);
-  list.forEach(function(a){ var tr=document.createElement("tr"); if(a.isMine) tr.className="you";
-    [a.rank, acctNames(a), a.level, a.memberCount, (a.xp|0).toLocaleString()].forEach(function(v){ var td=document.createElement("td"); td.textContent=String(v); tr.appendChild(td); });
     t.appendChild(tr); });
   var w=document.createElement("div"); w.className="gb-scroll"; w.appendChild(t); box.appendChild(w);
 }

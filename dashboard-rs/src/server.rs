@@ -470,6 +470,12 @@ fn do_get(app: &App, path: &str, query: &str, headers: &HeaderMap) -> Reply {
             let (c, r) = app.arena_quickplay("status", &json!({}));
             return Reply::json(c, &r);
         }
+        "/api/arena/accounts/standings" => {
+            let w = qs("window").unwrap_or_else(|| "season".into());
+            let w = if ["season", "30d", "7d", "all"].contains(&w.as_str()) { w } else { "season".into() };
+            let (c, r) = app.arena_account_standings(&w);
+            return Reply::json(c, &r);
+        }
         "/api/arena/accounts" | "/api/arena/accounts/mine" => {
             let (c, r) = app.arena_accounts(if path.ends_with("/mine") { "mine" } else { "board" });
             return Reply::json(c, &r);

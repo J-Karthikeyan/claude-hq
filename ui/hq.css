@@ -1273,6 +1273,23 @@ html.hq-calm .ach-tier.claimable,html.hq-calm .ach-tier.claimable{animation:none
 .arena-av{width:26px;height:26px;border-radius:50%;flex:0 0 auto;background:var(--line);object-fit:cover}
 .arena-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .arena-name small{display:block;color:var(--faint);font-size:12px;font-weight:400}
+/* Standings by account: the Players / Accounts switch and the expandable account rows */
+.arena-std-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 12px}
+.arena-std-head .section-h{margin:0}
+.arena-mode{margin-left:0}
+.arena-season{margin-left:auto;color:var(--faint);font-size:12px;font-weight:500;text-align:right}
+.arena-mode-note{font-size:12.5px;margin:0 0 10px}
+.acct-toggle{flex:0 0 auto;min-width:26px;min-height:26px;padding:0 6px;border-radius:7px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);font-size:14px;line-height:1}
+.acct-toggle:hover{color:var(--ink)}
+.acct-toggle:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.acct-avs{display:flex;flex:0 0 auto}
+.acct-avs .arena-av{border:2px solid var(--panel)}
+.acct-avs .arena-av + .arena-av{margin-left:-9px}
+.arena-tbl tr.acct-member td{background:var(--panel2);font-size:12px}
+.arena-tbl tr.acct-member td:nth-child(2){padding-left:46px}
+.arena-tbl tr.acct-member.you td{background:var(--brand-soft)}
+.acct-share{display:block;height:4px;margin-top:5px;border-radius:2px;background:var(--line);overflow:hidden;max-width:180px}
+.acct-share>span{display:block;height:100%;background:var(--brand)}
 .arena-setup{max-width:36rem;display:flex;flex-direction:column;gap:14px}
 .arena-setup label{display:block;font-size:12.5px;color:var(--muted);margin-bottom:5px;font-weight:550}
 .arena-setup input,.arena-chat-form input,.arena-room-form input:not([type=checkbox]),.arena-room-list input,.arena-room-join input{width:100%;height:36px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--ink);outline:none}

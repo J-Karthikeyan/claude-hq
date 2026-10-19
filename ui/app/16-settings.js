@@ -172,6 +172,7 @@ function saveSettings(){
   };
   if($("setWorkSignals")){ body.workSignals=!!$("setWorkSignals").checked; body.workSignalsPRs=body.workSignals && !!($("setWorkSignalsPRs") && $("setWorkSignalsPRs").checked); }
   if($("setAccountBoard")) body.arenaAccountBoard=!!$("setAccountBoard").checked;
+  var acctWas = (typeof CONFIG!=="undefined" && CONFIG && CONFIG.arenaAccountBoard===true);
   if(body.character===undefined) delete body.character;   // no WebGL2: the 3D character is left as it was
   // localStorage mirror so the Trainer Card paints instantly on next boot,
   // before the /api/config fetch resolves (resolveTrainerSpec validates it).
@@ -187,6 +188,12 @@ function saveSettings(){
   if(STATE) renderHealth(STATE.health);
   postConfig(body).then(function(r){
     toast(r.ok?"⚙️ Settings saved":"⚠ "+(r.j.error||"save failed"), r.ok?"level":"ach");
+    // Account board changed: publish now, so joining (or leaving) takes effect at once
+    // instead of on the next 5-minute background publish.
+    // Unpaired, the local route answers "not paired" and nothing leaves the machine.
+    if(r.ok && body.arenaAccountBoard!==undefined && body.arenaAccountBoard!==acctWas && typeof arenaPost==="function"){
+      arenaPost("/api/arena/publish").then(function(){ if(typeof arenaLoadBoard==="function") arenaLoadBoard(); });
+    }
   }).catch(function(){ toast("⚠ save failed","ach"); });
   $("settingsBack").classList.remove("open"); restoreOpener();
 }

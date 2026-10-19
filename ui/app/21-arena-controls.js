@@ -11,6 +11,10 @@ var CALI_UNSUPPORTED_MSG = "This Arena server doesn’t have the taco board yet 
 function caliPaid(total){ return Math.floor((total+1)/2); }
 
 /* ---- Arena controls ---- */
+(function(){ var m="players"; try{ m=localStorage.getItem("hq_arena_mode")||"players"; }catch(e){} arenaSetMode(m); })();
+Array.prototype.forEach.call(document.querySelectorAll("#arenaMode .arena-win"), function(b){
+  b.addEventListener("click", function(){ arenaSetMode(b.getAttribute("data-mode")); arenaLoadBoard(); });
+});
 Array.prototype.forEach.call(document.querySelectorAll("#arenaWins .arena-win"), function(b){
   b.addEventListener("click", function(){
     ARENA.window = b.getAttribute("data-window");

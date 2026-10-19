@@ -898,6 +898,28 @@ impl App {
         }
     }
 
+    /// Standings grouped by Claude account, for one window. Read-only; the
+    /// window is already allowlisted by the route.
+    ///
+    /// An Arena from before `/v1/accounts/standings` answers 404: then the same
+    /// shape is assembled here from routes it does have, the window's board
+    /// (`/v1/board`) and the account groups (`/v1/accounts`, `/v1/accounts/mine`),
+    /// joined on handle. Nothing extra is sent; these are the same reads the
+    /// Arena tab already makes.
+    pub fn arena_account_standings(&self, window: &str) -> (u16, Value) {
+        let (code, body) = self.authed_get(&format!("/v1/accounts/standings?window={}", window));
+        if code != 404 {
+            return (code, body);
+        }
+        let (bc, board) = self.authed_get(&format!("/v1/board?window={}", window));
+        let (ac, accounts) = self.authed_get("/v1/accounts");
+        if bc != 200 || ac != 200 {
+            return (code, body);
+        }
+        let (_, mine) = self.authed_get("/v1/accounts/mine");
+        (200, account_standings_from(&board, &accounts, &mine))
+    }
+
     pub fn arena_quickplay(&self, action: &str, body: &Value) -> (u16, Value) {
         if self.authed().is_none() {
             return not_paired();
@@ -940,6 +962,93 @@ pub fn start_nudge_poller(app: Arc<App>, notify: fn(&str, &str, bool) -> Result<
             }
         })
         .ok();
+}
+
+/// The `/v1/accounts/standings` shape, built from an older Arena's window
+/// board and account groups. Scored like the server: a member's window numbers
+/// are their Standings row (zero if they have none), an account sums them
+/// (best member for days and streak), and its level is the crew formula, the
+/// average member's level plus one per extra member. `/v1/accounts` lists only
+/// the first five members of each group, so a larger group is completed from
+/// `/v1/accounts/mine` when it is yours, and otherwise marked `partial`.
+pub fn account_standings_from(board: &Value, accounts: &Value, mine: &Value) -> Value {
+    use crate::creature::{derive_level, rank_for_level};
+    let num = |v: &Value, k: &str| v.get(k).and_then(Value::as_i64).unwrap_or(0);
+    let text = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    let entries: Vec<&Value> = board.get("entries").and_then(Value::as_array).map(|a| a.iter().collect()).unwrap_or_default();
+    let by_handle: std::collections::HashMap<String, &Value> = entries.iter().map(|e| (text(e, "handle").to_lowercase(), *e)).collect();
+    let handles_of = |a: &Value| -> Vec<String> {
+        a.get("members").and_then(Value::as_array).map(|m| m.iter().map(|x| text(x, "handle")).collect()).unwrap_or_default()
+    };
+    let mine_groups: Vec<&Value> = mine.get("accounts").and_then(Value::as_array).map(|a| a.iter().collect()).unwrap_or_default();
+
+    let mut out: Vec<Value> = Vec::new();
+    for a in accounts.get("accounts").and_then(Value::as_array).into_iter().flatten() {
+        let preview = handles_of(a);
+        // Your own group: the full list, from the /mine entry that contains this preview.
+        let full = mine_groups.iter().find(|g| {
+            let hs = handles_of(g);
+            !preview.is_empty() && preview.iter().all(|h| hs.contains(h))
+        });
+        let roster: Vec<&Value> = full.or(Some(&a))
+            .and_then(|g| g.get("members").and_then(Value::as_array))
+            .map(|m| m.iter().collect())
+            .unwrap_or_default();
+        let count = (num(a, "memberCount") as usize).max(roster.len());
+        let mut members: Vec<Value> = roster.iter().map(|m| {
+            let h = text(m, "handle");
+            match by_handle.get(&h.to_lowercase()) {
+                Some(e) => json!({
+                    "handle": h, "displayName": text(e, "displayName"), "trainerName": text(e, "trainerName"),
+                    "avatarUrl": text(e, "avatarUrl"), "xp": num(e, "xp"), "level": num(e, "level"),
+                    "rankTitle": text(e, "rankTitle"), "prompts": num(e, "prompts"), "tools": num(e, "tools"),
+                    "artifacts": num(e, "artifacts"), "activeDays": num(e, "activeDays"), "streak": num(e, "streak"),
+                    "tokensTotal": num(e, "tokensTotal"), "share": 0, "isYou": e.get("isYou").and_then(Value::as_bool).unwrap_or(false),
+                }),
+                None => {
+                    let level = derive_level(0).0;
+                    let dn = text(m, "displayName");
+                    json!({
+                        "handle": h.clone(), "displayName": if dn.is_empty() { h } else { dn }, "trainerName": "",
+                        "avatarUrl": text(m, "avatarUrl"), "xp": 0, "level": level, "rankTitle": rank_for_level(level),
+                        "prompts": 0, "tools": 0, "artifacts": 0, "activeDays": 0, "streak": 0, "tokensTotal": 0,
+                        "share": 0, "isYou": false,
+                    })
+                }
+            }
+        }).collect();
+        let sum = |k: &str, ms: &[Value]| ms.iter().map(|m| num(m, k)).sum::<i64>();
+        let best = |k: &str, ms: &[Value]| ms.iter().map(|m| num(m, k)).max().unwrap_or(0);
+        let xp = sum("xp", &members);
+        for m in members.iter_mut() {
+            let mx = num(m, "xp");
+            m["share"] = json!(if xp > 0 { (mx * 100 + xp / 2) / xp } else { 0 });
+        }
+        members.sort_by(|x, y| num(y, "xp").cmp(&num(x, "xp")).then(text(x, "handle").cmp(&text(y, "handle"))));
+        let n = members.len() as i64;
+        let is_mine = full.is_some() || a.get("isMine").and_then(Value::as_bool).unwrap_or(false) || members.iter().any(|m| m["isYou"] == json!(true));
+        out.push(json!({
+            "rank": 0, "xp": xp, "level": derive_level(xp / n.max(1)).0 + n - 1,
+            "prompts": sum("prompts", &members), "tools": sum("tools", &members), "artifacts": sum("artifacts", &members),
+            "activeDays": best("activeDays", &members), "streak": best("streak", &members),
+            "tokensTotal": sum("tokensTotal", &members), "memberCount": count, "isMine": is_mine,
+            "partial": members.len() < count, "members": members,
+        }));
+    }
+    out.sort_by(|x, y| {
+        let first = |v: &Value| v["members"].get(0).map(|m| text(m, "handle").to_lowercase()).unwrap_or_default();
+        num(y, "xp").cmp(&num(x, "xp")).then(first(x).cmp(&first(y)))
+    });
+    for (i, a) in out.iter_mut().enumerate() {
+        a["rank"] = json!(i as i64 + 1);
+    }
+    json!({
+        "window": board.get("window").cloned().unwrap_or(Value::Null),
+        "startsOn": board.get("startsOn").cloned().unwrap_or(Value::Null),
+        "endsOn": board.get("endsOn").cloned().unwrap_or(Value::Null),
+        "seasonName": board.get("seasonName").cloned().unwrap_or(Value::Null),
+        "accounts": out,
+    })
 }
 
 #[cfg(test)]
@@ -1270,5 +1379,59 @@ pub(crate) mod tests {
         let s = sent.lock().unwrap();
         let got: Vec<(&str, &str)> = s.iter().map(|r| (r.0.as_str(), r.1.as_str())).collect();
         assert_eq!(got, [("GET", "https://arena.example/v1/accounts"), ("GET", "https://arena.example/v1/accounts/mine")]);
+        drop(s);
+        assert_eq!(app.arena_account_standings("7d").0, 200);
+        assert_eq!(sent.lock().unwrap().last().unwrap().1, "https://arena.example/v1/accounts/standings?window=7d");
+    }
+
+    #[test]
+    fn an_older_arena_gets_account_standings_built_locally() {
+        let (_d, app) = app();
+        app.save_link(&json!({"token": "T", "url": "https://arena.example", "handle": "bob"})).unwrap();
+        let board = json!({"window": "7d", "startsOn": "2026-10-13", "endsOn": "2026-10-19", "seasonName": "October 2026", "entries": [
+            {"handle": "ann", "displayName": "Ann", "trainerName": "", "avatarUrl": "a.png", "xp": 300, "level": 1, "rankTitle": "Prompt Apprentice",
+             "prompts": 30, "tools": 0, "artifacts": 0, "activeDays": 3, "streak": 2, "tokensTotal": 10, "isYou": false},
+            {"handle": "Bob", "displayName": "Bob", "trainerName": "Bo", "avatarUrl": "", "xp": 100, "level": 1, "rankTitle": "Prompt Apprentice",
+             "prompts": 10, "tools": 0, "artifacts": 0, "activeDays": 5, "streak": 1, "tokensTotal": 5, "isYou": true},
+            {"handle": "zed", "displayName": "Zed", "xp": 900, "isYou": false}]});
+        let accounts = json!({"accounts": [{"rank": 1, "level": 9, "xp": 1, "memberCount": 3, "isMine": true,
+            "members": [{"handle": "ann", "displayName": "Ann", "avatarUrl": "", "level": 1}, {"handle": "bob", "displayName": "Bob", "avatarUrl": "", "level": 1}]}]});
+        let mine = json!({"accounts": [{"rank": 1, "memberCount": 3, "isMine": true, "members": [
+            {"handle": "ann", "displayName": "Ann", "avatarUrl": "", "level": 1}, {"handle": "bob", "displayName": "Bob", "avatarUrl": "", "level": 1},
+            {"handle": "cy", "displayName": "", "avatarUrl": "c.png", "level": 1}]}]});
+        let routes: Vec<(&str, (u16, Value))> = vec![
+            ("/v1/accounts/standings?window=7d", (404, json!({"detail": "Not Found"}))),
+            ("/v1/board?window=7d", (200, board)),
+            ("/v1/accounts/mine", (200, mine)),
+            ("/v1/accounts", (200, accounts)),
+        ];
+        let sent: Sent = Arc::new(Mutex::new(Vec::new()));
+        let s2 = sent.clone();
+        *app.arena.transport.write().unwrap() = Some(Arc::new(move |m, u, t, b| {
+            s2.lock().unwrap().push((m.to_string(), u.to_string(), t.map(String::from), b.cloned()));
+            routes.iter().find(|(tail, _)| u.ends_with(tail)).map(|(_, r)| r.clone()).unwrap_or((500, json!({})))
+        }));
+        let (code, out) = app.arena_account_standings("7d");
+        assert_eq!(code, 200);
+        assert_eq!(out["seasonName"], json!("October 2026"));
+        let a = &out["accounts"][0];
+        assert_eq!((a["xp"].clone(), a["prompts"].clone(), a["activeDays"].clone(), a["memberCount"].clone()), (json!(400), json!(40), json!(5), json!(3)));
+        assert_eq!((a["isMine"].clone(), a["partial"].clone()), (json!(true), json!(false)));
+        let ms: Vec<(String, i64, bool)> = a["members"].as_array().unwrap().iter()
+            .map(|m| (m["handle"].as_str().unwrap().to_string(), m["share"].as_i64().unwrap(), m["isYou"].as_bool().unwrap())).collect();
+        assert_eq!(ms, [("ann".to_string(), 75, false), ("bob".to_string(), 25, true), ("cy".to_string(), 0, false)]);
+        assert_eq!(a["members"][2]["avatarUrl"], json!("c.png"));
+        assert_eq!(a["level"], json!(crate::creature::derive_level(400 / 3).0 + 2));
+        // Only GETs, all to the paired Arena.
+        assert!(sent.lock().unwrap().iter().all(|r| r.0 == "GET" && r.1.starts_with("https://arena.example/") && r.3.is_none()));
+    }
+
+    #[test]
+    fn a_large_group_that_is_not_yours_is_marked_partial() {
+        let board = json!({"entries": []});
+        let accounts = json!({"accounts": [{"memberCount": 7, "isMine": false, "members": [{"handle": "a"}, {"handle": "b"}]}]});
+        let out = account_standings_from(&board, &accounts, &json!({"accounts": []}));
+        assert_eq!(out["accounts"][0]["partial"], json!(true));
+        assert_eq!(out["accounts"][0]["xp"], json!(0));
     }
 }

@@ -3,6 +3,9 @@
 //!   POST /v1/me/account     (device token) body: {"key": 64 hex | ""}
 //!   GET  /v1/accounts       (device token) the board
 //!   GET  /v1/accounts/mine  (device token) every group the caller is in
+//!   GET  /v1/accounts/standings?window=season|30d|7d|all
+//!                           (device token) the Standings table, grouped by
+//!                           account, with each member's share of the window
 //!
 //! The local HQ (opt-in, `arenaAccountBoard`) sends
 //! `sha256("claude-hq:account:v1:" + accountUuid)`. Only that hash leaves the
@@ -26,14 +29,14 @@
 //! fields as every other board.
 
 use axum::{
-    extract::{Request, State},
+    extract::{Query, Request, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use hmac::{Hmac, Mac};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::Sha256;
 use sqlx::{Row, SqliteConnection};
@@ -57,6 +60,7 @@ pub fn routes() -> Router<crate::AppState> {
         .route("/v1/me/account", post(set_key))
         .route("/v1/accounts", get(board))
         .route("/v1/accounts/mine", get(mine))
+        .route("/v1/accounts/standings", get(standings))
 }
 
 fn err(code: StatusCode, msg: &str) -> Response {
@@ -239,6 +243,165 @@ async fn build(
     Ok(assemble(&groups, &prog, viewer_id, preview, cap))
 }
 
+// --- standings: the Standings table, one row per account ------------------
+
+/// One member's numbers for the window, the same figures the Standings row
+/// shows, plus their share of the account's XP.
+#[derive(Debug, Serialize)]
+struct StandingMember {
+    handle: String,
+    #[serde(rename = "displayName")]
+    display_name: String,
+    #[serde(rename = "trainerName")]
+    trainer_name: String,
+    #[serde(rename = "avatarUrl")]
+    avatar_url: String,
+    xp: i64,
+    level: i64,
+    #[serde(rename = "rankTitle")]
+    rank_title: String,
+    prompts: i64,
+    tools: i64,
+    artifacts: i64,
+    #[serde(rename = "activeDays")]
+    active_days: i64,
+    streak: i64,
+    #[serde(rename = "tokensTotal")]
+    tokens_total: i64,
+    /// Whole percent of the account's window XP, 0 when the account has none.
+    share: i64,
+    #[serde(rename = "isYou")]
+    is_you: bool,
+}
+
+/// Sums over the members, except `activeDays` and `streak`, which are the
+/// best member's: days and streaks do not add up across people.
+#[derive(Debug, Serialize)]
+struct StandingAccount {
+    rank: i64,
+    xp: i64,
+    level: i64,
+    prompts: i64,
+    tools: i64,
+    artifacts: i64,
+    #[serde(rename = "activeDays")]
+    active_days: i64,
+    streak: i64,
+    #[serde(rename = "tokensTotal")]
+    tokens_total: i64,
+    #[serde(rename = "memberCount")]
+    member_count: usize,
+    #[serde(rename = "isMine")]
+    is_mine: bool,
+    members: Vec<StandingMember>,
+}
+
+#[derive(Debug, Serialize)]
+struct StandingsOut {
+    window: String,
+    #[serde(rename = "startsOn")]
+    starts_on: chrono::NaiveDate,
+    #[serde(rename = "endsOn")]
+    ends_on: chrono::NaiveDate,
+    #[serde(rename = "seasonName")]
+    season_name: String,
+    accounts: Vec<StandingAccount>,
+}
+
+/// Pure: fold the window's board entries into the account groups. A member
+/// with nothing in the window still shows, at zero, so the group is whole.
+fn fold_standings(
+    groups: &BTreeMap<String, Vec<GroupRow>>,
+    entries: &[crate::service::BoardEntry],
+    viewer_id: &str,
+) -> Vec<StandingAccount> {
+    let by_user: HashMap<&str, &crate::service::BoardEntry> =
+        entries.iter().map(|e| (e.user_id.as_str(), e)).collect();
+    let mut out: Vec<(String, StandingAccount)> = groups
+        .values()
+        .map(|mem| {
+            let mut members: Vec<StandingMember> = mem
+                .iter()
+                .map(|m| match by_user.get(m.user_id.as_str()) {
+                    Some(e) => StandingMember {
+                        handle: e.handle.clone(),
+                        display_name: e.display_name.clone(),
+                        trainer_name: e.trainer_name.clone(),
+                        avatar_url: e.avatar_url.clone(),
+                        xp: e.xp,
+                        level: e.level,
+                        rank_title: e.rank_title.clone(),
+                        prompts: e.prompts,
+                        tools: e.tools,
+                        artifacts: e.artifacts,
+                        active_days: e.active_days,
+                        streak: e.streak,
+                        tokens_total: e.tokens_total,
+                        share: 0,
+                        is_you: m.user_id == viewer_id,
+                    },
+                    None => {
+                        let level = derive_level(0).0;
+                        StandingMember {
+                            handle: m.handle.clone(),
+                            display_name: if m.display_name.is_empty() { m.handle.clone() } else { m.display_name.clone() },
+                            trainer_name: String::new(),
+                            avatar_url: m.avatar_url.clone(),
+                            xp: 0,
+                            level,
+                            rank_title: crate::scoring::rank_for_level(level).to_string(),
+                            prompts: 0,
+                            tools: 0,
+                            artifacts: 0,
+                            active_days: 0,
+                            streak: 0,
+                            tokens_total: 0,
+                            share: 0,
+                            is_you: m.user_id == viewer_id,
+                        }
+                    }
+                })
+                .collect();
+            let xp: i64 = members.iter().map(|m| m.xp).sum();
+            for m in members.iter_mut() {
+                m.share = if xp > 0 { (m.xp * 100 + xp / 2) / xp } else { 0 };
+            }
+            members.sort_by(|a, b| b.xp.cmp(&a.xp).then(a.handle.cmp(&b.handle)));
+            let first = members.first().map(|m| m.handle.to_lowercase()).unwrap_or_default();
+            let acct = StandingAccount {
+                rank: 0,
+                xp,
+                level: crew_level(xp, members.len()),
+                prompts: members.iter().map(|m| m.prompts).sum(),
+                tools: members.iter().map(|m| m.tools).sum(),
+                artifacts: members.iter().map(|m| m.artifacts).sum(),
+                active_days: members.iter().map(|m| m.active_days).max().unwrap_or(0),
+                streak: members.iter().map(|m| m.streak).max().unwrap_or(0),
+                tokens_total: members.iter().map(|m| m.tokens_total).sum(),
+                member_count: members.len(),
+                is_mine: members.iter().any(|m| m.is_you),
+                members,
+            };
+            (first, acct)
+        })
+        .collect();
+    out.sort_by(|a, b| b.1.xp.cmp(&a.1.xp).then(a.0.cmp(&b.0)));
+    out.into_iter()
+        .enumerate()
+        .map(|(i, (_, mut a))| {
+            a.rank = i as i64 + 1;
+            a
+        })
+        .take(BOARD_SIZE)
+        .collect()
+}
+
+#[derive(Deserialize)]
+struct WindowQ {
+    #[serde(default)]
+    window: Option<String>,
+}
+
 // --- routes ---------------------------------------------------------------
 
 async fn set_key(State(st): State<crate::AppState>, req: Request) -> Response {
@@ -273,6 +436,34 @@ async fn board(State(st): State<crate::AppState>, req: Request) -> Response {
         Ok(accounts) => Json(json!({ "accounts": accounts })).into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}")),
     }
+}
+
+async fn standings(State(st): State<crate::AppState>, Query(q): Query<WindowQ>, req: Request) -> Response {
+    let c = req.extensions().get::<crate::Caller>().expect("caller set by middleware").clone();
+    let window = q.window.unwrap_or_else(|| "season".into());
+    if !crate::service::WINDOWS.contains(&window.as_str()) {
+        return err(StatusCode::BAD_REQUEST, &format!("window must be one of {}", crate::service::WINDOWS.join(", ")));
+    }
+    let board = match crate::service::build_board(&st.pool, &window, Some(&c.user_id)).await {
+        Ok(b) => b,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}")),
+    };
+    let mut conn = match st.pool.acquire().await {
+        Ok(conn) => conn,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}")),
+    };
+    let groups = match group_rows(&mut conn).await {
+        Ok(rows) => group(rows),
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e}")),
+    };
+    Json(StandingsOut {
+        window: board.window,
+        starts_on: board.starts_on,
+        ends_on: board.ends_on,
+        season_name: board.season_name,
+        accounts: fold_standings(&groups, &board.entries, &c.user_id),
+    })
+    .into_response()
 }
 
 /// A list, not one group: a person on two machines signed into two Claude
@@ -399,5 +590,35 @@ mod tests {
         }
         let mut conn = pool.acquire().await.unwrap();
         assert!(build(&mut conn, "u0", None, None).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn standings_group_the_window_and_show_each_share() {
+        let pool = pool().await;
+        user(&pool, "ann", 1, 30).await;
+        user(&pool, "bob", 2, 10).await;
+        user(&pool, "cy", 3, 0).await; // on the account, nothing this window
+        user(&pool, "dee", 4, 50).await; // alone on K2: no account row
+        for u in ["ann", "bob", "cy"] {
+            device(&pool, u, Some(K1), "-1 hours", false).await;
+        }
+        device(&pool, "dee", Some(K2), "-1 hours", false).await;
+
+        let board = crate::service::build_board(&pool, "7d", Some("bob")).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let groups = group(group_rows(&mut conn).await.unwrap());
+        let out = fold_standings(&groups, &board.entries, "bob");
+        assert_eq!(out.len(), 1);
+        let a = &out[0];
+        assert_eq!((a.rank, a.member_count, a.is_mine, a.prompts), (1, 3, true, 40));
+        let order: Vec<(&str, i64, bool)> = a.members.iter().map(|m| (m.handle.as_str(), m.share, m.is_you)).collect();
+        assert_eq!(order[0].0, "ann");
+        assert_eq!(order[1], ("bob", order[1].1, true));
+        assert_eq!(order[2], ("cy", 0, false));
+        assert_eq!(a.members.iter().map(|m| m.share).sum::<i64>(), 100);
+        assert_eq!(a.xp, a.members.iter().map(|m| m.xp).sum::<i64>());
+        assert_eq!(a.level, crew_level(a.xp, 3));
+        let blob = serde_json::to_string(&out).unwrap();
+        assert!(!blob.contains(K1) && !blob.contains("userId") && !blob.contains("\"ann\",\"user_id"));
     }
 }

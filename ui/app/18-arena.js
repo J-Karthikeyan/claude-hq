@@ -107,6 +107,9 @@ function arenaNudgeHandle(handle, btn){
   }).catch(function(){ if(btn) btn.disabled=false; });
 }
 function arenaLoadBoard(){
+  if(ARENA.mode==="accounts"){ arenaLoadAccounts(); return; }
+  arenaModeNote("");
+  var wh=$("arenaWhoH"); if(wh) wh.textContent="Trainer";
   fetch("/api/arena/board?window="+encodeURIComponent(ARENA.window),{cache:"no-store"})
     .then(function(r){return r.json();})
     .then(function(b){
@@ -161,6 +164,115 @@ function arenaLoadBoard(){
         body.appendChild(tr);
       });
       arenaGiftButtonsSync();
+    }).catch(function(){});
+}
+
+/* ---- Standings by account ----
+   People signed into the same Claude account (opt-in: Settings > Account board) are one row:
+   their combined numbers for the window, expandable to each member's share. The Arena sends only
+   public handles and counts; the account key itself never reaches this page. */
+var ACCT_OPEN = {};   // account row key (its members' handles) -> expanded
+function arenaModeNote(t){ var n=$("arenaModeNote"); if(!n) return; n.textContent=t||""; n.classList.toggle("hidden", !t); }
+function arenaSetMode(m){
+  ARENA.mode = m==="accounts" ? "accounts" : "players";
+  try{ localStorage.setItem("hq_arena_mode", ARENA.mode); }catch(e){}
+  Array.prototype.forEach.call(document.querySelectorAll("#arenaMode .arena-win"), function(o){
+    var on = o.getAttribute("data-mode")===ARENA.mode;
+    o.classList.toggle("on", on); o.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+}
+function acctName(a){
+  var ms=(a && a.members) || [];
+  var names=ms.slice(0,3).map(function(m){ return m.trainerName || m.displayName || m.handle; });
+  var more=Math.max(0, (a.memberCount|0) - names.length);
+  return names.join(", ") + (more ? " +"+more : "");
+}
+function acctWho(img, title, sub){
+  var wrap=document.createElement("div"); wrap.className="arena-who";
+  if(img) wrap.appendChild(img);
+  var nm=document.createElement("div"); nm.className="arena-name"; nm.textContent=title;
+  var sm=document.createElement("small"); sm.textContent=sub; nm.appendChild(sm); wrap.appendChild(nm);
+  return wrap;
+}
+function acctAvatar(url){
+  if(!url) return null;
+  var i=document.createElement("img"); i.className="arena-av"; i.src=url; i.alt=""; i.loading="lazy";
+  i.addEventListener("error", function(){ i.remove(); });
+  return i;
+}
+// Plain numbers, not |0: token totals run into the billions, past int32.
+function acctN(v){ v=Number(v); return isFinite(v) && v>0 ? Math.floor(v) : 0; }
+function acctNums(tr, e){
+  [arenaNum(acctN(e.xp)), acctN(e.level), arenaNum(acctN(e.prompts)), arenaNum(acctN(e.tools)), acctN(e.artifacts), acctN(e.activeDays),
+   (acctN(e.streak) ? acctN(e.streak)+"🔥" : "0"), arenaNum(acctN(e.tokensTotal))].forEach(function(v){
+    var td=document.createElement("td"); td.textContent=String(v); tr.appendChild(td);
+  });
+}
+function arenaLoadAccounts(){
+  var wh=$("arenaWhoH"); if(wh) wh.textContent="Account";
+  var win=ARENA.window;
+  fetch("/api/arena/accounts/standings?window="+encodeURIComponent(win),{cache:"no-store"})
+    .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, status:r.status, j:j}; }, function(){ return {ok:false, status:r.status, j:{}}; }); })
+    .then(function(res){
+      if(ARENA.mode!=="accounts" || ARENA.window!==win) return;   // the user switched while this was in flight
+      var body=$("arenaRows"); if(!body) return;
+      body.textContent="";
+      function emptyRow(t){ var tr=document.createElement("tr"), td=document.createElement("td"); td.colSpan=10; td.className="muted"; td.textContent=t; tr.appendChild(td); body.appendChild(tr); }
+      if(!res.ok){
+        arenaModeNote("");
+        emptyRow(res.status===404 ? "This Arena doesn't have account standings yet: ask its owner to update it." : String(res.j.error || res.j.detail || "Couldn't load account standings."));
+        return;
+      }
+      var b=res.j;
+      $("arenaSeason").textContent = (b.seasonName||"") + " · " + b.startsOn + " → " + b.endsOn;
+      var on=(typeof CONFIG!=="undefined" && CONFIG && CONFIG.arenaAccountBoard===true);
+      var list=b.accounts||[];
+      var mine=list.some(function(a){ return a.isMine; });
+      arenaModeNote(!on ? "You're not in account standings: turn on Settings › Account board, then Publish now."
+        : (!mine ? "Account board is on. You'll appear once someone else signed into your Claude account turns it on and publishes." : ""));
+      if(!list.length){ emptyRow("No accounts yet: an account shows once two people on it have turned on Account board and published."); return; }
+      list.forEach(function(a){
+        var key=(a.members||[]).map(function(m){ return m.handle; }).sort().join(",");
+        var open=!!ACCT_OPEN[key];
+        var tr=document.createElement("tr"); if(a.isMine) tr.className="you";
+        var rk=document.createElement("td"); rk.className="arena-rank"+(a.rank<=3 ? (" r"+a.rank) : "");
+        rk.textContent = a.rank<=3 ? ["🥇","🥈","🥉"][a.rank-1] : String(a.rank); tr.appendChild(rk);
+        var who=document.createElement("td");
+        var avs=document.createElement("div"); avs.className="acct-avs"; avs.setAttribute("aria-hidden","true");
+        (a.members||[]).slice(0,3).forEach(function(m){ var i=acctAvatar(m.avatarUrl); if(i) avs.appendChild(i); });
+        var w=acctWho(avs, acctName(a), (a.memberCount|0)+" people"+(a.isMine ? " · your account" : "")
+          +(a.partial ? " · totals cover the "+((a.members||[]).length)+" listed" : ""));
+        var tg=document.createElement("button"); tg.type="button"; tg.className="acct-toggle";
+        tg.setAttribute("aria-expanded", open ? "true" : "false");
+        tg.setAttribute("aria-label", (open ? "Hide" : "Show")+" each member's share for "+acctName(a));
+        tg.textContent = open ? "▾" : "▸";
+        w.insertBefore(tg, w.firstChild);
+        who.appendChild(w); tr.appendChild(who);
+        acctNums(tr, a);
+        body.appendChild(tr);
+        var rows=[];
+        (a.members||[]).forEach(function(m){
+          var mr=document.createElement("tr"); mr.className="acct-member"+(m.isYou ? " you" : ""); mr.hidden=!open;
+          var c0=document.createElement("td"); c0.textContent=""; mr.appendChild(c0);
+          var c1=document.createElement("td");
+          var mw=acctWho(acctAvatar(m.avatarUrl), m.trainerName || m.displayName || m.handle,
+                         "@"+m.handle+" · "+(m.share|0)+"% of this account's XP");
+          var bar=document.createElement("span"); bar.className="acct-share"; bar.setAttribute("aria-hidden","true");
+          var fill=document.createElement("span"); fill.style.width=Math.max(0, Math.min(100, m.share|0))+"%"; bar.appendChild(fill);
+          mw.querySelector(".arena-name").appendChild(bar);
+          c1.appendChild(mw); mr.appendChild(c1);
+          acctNums(mr, m);
+          body.appendChild(mr); rows.push(mr);
+        });
+        tg.addEventListener("click", function(){
+          var now=!ACCT_OPEN[key]; ACCT_OPEN[key]=now;
+          rows.forEach(function(r){ r.hidden=!now; });
+          tg.setAttribute("aria-expanded", now ? "true" : "false");
+          tg.setAttribute("aria-label", (now ? "Hide" : "Show")+" each member's share for "+acctName(a));
+          tg.textContent = now ? "▾" : "▸";
+          if(typeof announce==="function") announce(now ? "Showing "+(a.memberCount|0)+" members" : "Members hidden");
+        });
+      });
     }).catch(function(){});
 }
 

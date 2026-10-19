@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 2.8.1** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 2.8.2** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -330,6 +330,14 @@ and feature guide.
 
 ## Changelog
 
+- **2.8.2 — Account standings.** The Arena's **Standings** has a **Players / Accounts** switch next to
+  its title. Accounts mode ranks Claude accounts for the chosen window (Season, 30 days, 7 days, All
+  time): one row per account with everyone's combined numbers, expandable to each member's own row and
+  their share of the account's XP. The account board moves here from the Crew panel. Saving Settings
+  with **Account board** changed now publishes at once instead of on the next 5-minute publish. New
+  Arena route `GET /v1/accounts/standings?window=`; against an Arena without it, the local HQ builds the
+  same table from `/v1/board`, `/v1/accounts` and `/v1/accounts/mine` (GETs it already makes; nothing
+  new leaves the machine). Shows only public handles and counts, never the account key.
 - **2.8.1 — Arena City driving.** New, detailed car (a hatchback with wheel arches, alloys, a
   glass cabin with seats, dashboard and a turning wheel, brake lights), motorbike (a small street
   bike) and bicycle (spoked wheels, turning cranks), in scale with your character. Riders sit on the

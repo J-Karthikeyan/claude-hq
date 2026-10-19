@@ -24,6 +24,9 @@ pub fn window_range(window: &str, today: NaiveDate) -> (NaiveDate, NaiveDate) {
 
 #[derive(Debug, Serialize)]
 pub struct BoardEntry {
+    /// Never sent: lets the account standings group entries without matching
+    /// on handles, which can change.
+    #[serde(skip)] pub user_id: String,
     pub rank: i64,
     pub handle: String,
     #[serde(rename = "displayName")] pub display_name: String,
@@ -120,6 +123,7 @@ pub async fn build_board(
             let handle: String = r.get("handle");
             let display: String = r.get("display_name");
             BoardEntry {
+                user_id: id.clone(),
                 rank: 0,
                 display_name: if display.is_empty() { handle.clone() } else { display },
                 trainer_name: r.get("trainer_name"),

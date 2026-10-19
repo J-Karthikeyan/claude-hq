@@ -745,11 +745,19 @@
     </section>
 
     <section class="panel hidden" id="arenaBoardWrap" aria-label="Leaderboard" tabindex="-1">
-      <h3 class="section-h"><svg class="i" aria-hidden="true"><use href="#i-crown"/></svg>Standings <span class="muted" id="arenaSeason"></span></h3>
+      <div class="arena-std-head">
+        <h3 class="section-h"><svg class="i" aria-hidden="true"><use href="#i-crown"/></svg>Standings</h3>
+        <div class="arena-wins arena-mode" id="arenaMode" role="group" aria-label="Standings by">
+          <button class="arena-win on" data-mode="players" type="button" aria-pressed="true">Players</button>
+          <button class="arena-win" data-mode="accounts" type="button" aria-pressed="false">Accounts</button>
+        </div>
+        <span class="arena-season" id="arenaSeason"></span>
+      </div>
+      <p class="muted arena-mode-note hidden" id="arenaModeNote" role="status"></p>
       <div style="overflow-x:auto">
         <table class="arena-tbl">
           <thead><tr>
-            <th>#</th><th>Trainer</th><th>XP</th><th>Lvl</th>
+            <th>#</th><th id="arenaWhoH">Trainer</th><th>XP</th><th>Lvl</th>
             <th>Prompts</th><th>Tools</th><th>Artifacts</th>
             <th>Days</th><th>Streak</th><th>Tokens</th>
           </tr></thead>

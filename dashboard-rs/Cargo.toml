@@ -1,6 +1,6 @@
 [package]
 name = "claudehq"
-version = "2.8.1"
+version = "2.8.2"
 edition = "2021"
 description = "Claude HQ local server (Rust port of dashboard.py and the modules it imports)"
 
