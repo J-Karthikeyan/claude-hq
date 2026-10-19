@@ -19,8 +19,8 @@ use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
 /// The games this module knows how to write down. Python's `results.GAMES`
-/// (results.py:25), in its order.
-pub const GAMES: [&str; 7] = ["kart", "plat", "fps", "golf", "type", "td", "bowl"];
+/// (results.py:25), in its order, then the Rust-only Valley Rally.
+pub const GAMES: [&str; 8] = ["kart", "plat", "fps", "golf", "type", "td", "bowl", "rally"];
 
 /// One `game_results` row, before it reaches the database.
 #[derive(Debug, Clone, PartialEq)]
@@ -92,6 +92,10 @@ pub fn rows_from_done(game: &str, data: &Value) -> Vec<Row> {
     // Golf never goes near the `results` list: it is ranked out of `totals`.
     if game == "golf" {
         return golf_rows(data);
+    }
+    // Rally's results name the player by a bare `uid`, not a `user` profile.
+    if game == "rally" {
+        return rally_rows(data);
     }
     let empty: Vec<Value> = Vec::new();
     let res: Vec<&Value> = data
@@ -202,6 +206,44 @@ pub fn rows_from_done(game: &str, data: &Value) -> Vec<Row> {
                 }
             }
             row
+        })
+        .collect()
+}
+
+/// Valley Rally's rows: one board per stage (`done.key`, the stage's "c-"
+/// content key, so the daily stage gets one board a day), scored on time where
+/// lower wins; a DNF keeps its row with no time. `mode` is "event" for a stage
+/// of a multi-stage event, else "stage"; `extra` keeps the gate splits.
+fn rally_rows(data: &Value) -> Vec<Row> {
+    let empty: Vec<Value> = Vec::new();
+    let res: Vec<(&str, &Value)> = data
+        .get("results")
+        .and_then(Value::as_array)
+        .unwrap_or(&empty)
+        .iter()
+        .filter_map(|r| Some((r.get("uid")?.as_str()?, r)))
+        .collect();
+    let n = res.len() as i64;
+    let key = clipped_str(data.get("key"), 40);
+    let event = data.get("event").and_then(|e| e.get("count")).and_then(Value::as_i64).unwrap_or(1) > 1;
+    res.iter()
+        .map(|(uid, r)| {
+            let dnf = truthy(r.get("dnf")) || r.get("ms").and_then(Value::as_f64).is_none();
+            let splits: Vec<i64> = r
+                .get("splits")
+                .and_then(Value::as_array)
+                .map(|s| s.iter().filter_map(Value::as_i64).collect())
+                .unwrap_or_default();
+            Row {
+                user_id: uid.to_string(),
+                game: "rally".to_string(),
+                key: key.clone(),
+                mode: if event { "event" } else { "stage" }.to_string(),
+                place: int_or(r.get("place"), n),
+                players: n,
+                value: if dnf { None } else { r.get("ms").and_then(Value::as_f64).map(|ms| ms as i64) },
+                extra: json!({"splits": splits}),
+            }
         })
         .collect()
 }
@@ -366,6 +408,25 @@ mod tests {
 
     fn done(game: &str, data: Value) -> Vec<Row> {
         rows_from_done(game, &data)
+    }
+
+    #[test]
+    fn a_rally_done_keys_the_stage_and_keeps_dnfs_without_a_time() {
+        let rows = done("rally", json!({"key": "c-0123456789ab", "name": "Daily",
+            "results": [{"uid": "a", "name": "A", "ms": 61234, "car": 2, "place": 1, "dnf": false,
+                         "splits": [10000, 61234]},
+                        {"uid": "b", "name": "B", "ms": null, "car": 0, "place": 2, "dnf": true,
+                         "splits": []},
+                        {"name": "nobody"}]}));
+        assert_eq!(rows.len(), 2);
+        assert_eq!((rows[0].key.as_str(), rows[0].mode.as_str()), ("c-0123456789ab", "stage"));
+        assert_eq!((rows[0].place, rows[0].players, rows[0].value), (1, 2, Some(61234)));
+        assert_eq!(rows[0].extra, json!({"splits": [10000, 61234]}));
+        assert_eq!((rows[1].user_id.as_str(), rows[1].value), ("b", None));
+        let ev = done("rally", json!({"key": "c-0123456789ab", "event": {"index": 1, "count": 3},
+            "results": [{"uid": "a", "ms": 5, "place": 1}]}));
+        assert_eq!(ev[0].mode, "event");
+        assert_eq!(is_done(&json!({"ev": "done", "g": "rally"})), Some("rally"));
     }
 
     #[test]

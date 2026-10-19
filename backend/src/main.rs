@@ -30,6 +30,7 @@ mod privrooms;
 mod progress;
 mod protocol;
 mod quickplay;
+mod rally;
 mod realtime;
 mod results;
 mod rooms;
@@ -77,6 +78,8 @@ pub(crate) struct AppState {
     pub(crate) plat: platformer::PlatHub,
     pub(crate) fps: fps::FpsHub,
     pub(crate) strike: strike::StrikeHub,
+    /// Valley Rally (Rust-only): its own lobby, referee and stage loop.
+    pub(crate) rally: rally::RallyHub,
     /// The other eight Valley games plus Party Mode, behind one dispatcher.
     pub(crate) valley: valley::ValleyHub,
     /// Now Playing and listen-along rooms (memory only).
@@ -416,6 +419,7 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
     let plat = st.plat.clone();
     let arena = st.fps.clone();
     let strike = st.strike.clone();
+    let rally = st.rally.clone();
     let valley = st.valley.clone();
     let music = st.music.clone();
     let mut inbound = tokio::spawn(async move {
@@ -546,6 +550,9 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
                 Some("game") if v.get("g").and_then(|g| g.as_str()) == Some(strike::GAME) => {
                     strike.handle(&rid, conn_id, &me, &v).await
                 }
+                Some("game") if v.get("g").and_then(|g| g.as_str()) == Some(rally::GAME) => {
+                    rally.handle(&rid, conn_id, &me, &v).await
+                }
                 // A directed "come look at the Arena" ping. Carries no URL and no
                 // command by design -- only who it is from and a short note -- so a
                 // nudge can never make the recipient's machine open or do anything.
@@ -632,6 +639,7 @@ async fn handle_socket(socket: WebSocket, st: AppState, room_id: String, member:
     st.plat.on_disconnect(&room_id, conn_id, &member).await;
     st.fps.on_disconnect(&room_id, conn_id, &member).await;
     st.strike.on_disconnect(&room_id, conn_id, &member).await;
+    st.rally.on_disconnect(&room_id, conn_id, &member).await;
     st.valley.on_disconnect(&room_id, conn_id, &member).await;
     st.rooms.leave(&room_id, conn_id).await;
 }
@@ -849,6 +857,7 @@ async fn serve() -> anyhow::Result<()> {
     let plat = platformer::PlatHub::new(rooms.clone(), registry.clone(), clock.clone(), rec.clone());
     let fps = fps::FpsHub::new(rooms.clone(), registry.clone(), clock.clone(), rec.clone());
     let strike = strike::StrikeHub::new(rooms.clone(), registry.clone(), clock.clone(), rec.clone());
+    let rally = rally::RallyHub::new(rooms.clone(), registry.clone(), clock.clone(), rec.clone());
     // Some(pool): the farm is the only Valley game that persists anything, and
     // with None it would run and silently forget every seed, plant and harvest.
     let valley = valley::ValleyHub::new(
@@ -863,6 +872,7 @@ async fn serve() -> anyhow::Result<()> {
         plat,
         fps,
         strike,
+        rally,
         valley,
         music: music::MusicHub::default(),
         conn_seq: Arc::new(AtomicU64::new(1)),

@@ -2,7 +2,7 @@
 // All three come from the Arena, scored there: your HQ level (session XP + game XP from the
 // multiplayer games it refereed), anyone's trainer card, and per-game boards. Read-only here.
 var PROG = {data:null, at:0, loading:false};
-var PROG_GAMES = [["kart","Kart Racing"],["plat","Platformer Rush"],["golf","Mini Golf"],["fps","Blaster Arena"],["type","Code Typing Race"],["td","Tower Defense"],["bowl","Bowling"]];
+var PROG_GAMES = [["kart","Kart Racing"],["plat","Platformer Rush"],["golf","Mini Golf"],["fps","Blaster Arena"],["type","Code Typing Race"],["td","Tower Defense"],["bowl","Bowling"],["rally","Valley Rally"]];
 function progGet(path){
   return fetch(path,{cache:"no-store"}).then(function(r){ return r.json().then(function(j){ return {ok:r.ok, code:r.status, j:j}; }, function(){ return {ok:false, code:r.status, j:{}}; }); });
 }
@@ -92,18 +92,39 @@ function tcardRender(p){
 }
 
 /* ---- per-game leaderboards (Arena view) ---- */
-var GB = {game:"kart"};
+var GB = {game:"kart", rallyKey:null};
+// Valley Rally boards are per stage (key "c-" + 12 hex): the game remembers the stages you
+// raced in rooms on this browser (games/rally.js rememberKey), and the board shows one at a time.
+function gbRallyKeys(){
+  var list=[]; try { list=JSON.parse(localStorage.getItem("hq_rally_keys")||"[]"); } catch(e){ list=[]; }
+  return (Array.isArray(list)?list:[]).filter(function(e){ return Array.isArray(e) && /^c-[0-9a-f]{12}$/.test(String(e[0])) && typeof e[1]==="string"; }).slice(0,12);
+}
 function gbLoad(){
   var box=$("gbBody"); if(!box) return;
+  var url="/api/arena/leaderboards?game="+GB.game, rkeys=null;
+  if(GB.game==="rally"){
+    rkeys=gbRallyKeys();
+    if(!rkeys.length){ box.textContent=""; var nk=document.createElement("p"); nk.className="muted"; nk.textContent="Race a Valley Rally stage in an Arena room and its board shows up here."; box.appendChild(nk); return; }
+    if(!GB.rallyKey || !rkeys.some(function(k){ return k[0]===GB.rallyKey; })) GB.rallyKey=rkeys[0][0];
+    url+="&key="+encodeURIComponent(GB.rallyKey);
+  }
   box.innerHTML='<p class="muted">Loading…</p>';
-  progGet("/api/arena/leaderboards?game="+GB.game).then(function(res){
+  progGet(url).then(function(res){
     box.textContent="";
+    if(rkeys){
+      var lab=document.createElement("label"); lab.className="gb-key"; lab.textContent="Stage ";
+      var sel=document.createElement("select"); sel.className="gb-stage";
+      rkeys.forEach(function(k){ var o=document.createElement("option"); o.value=k[0]; o.textContent=k[1]; if(k[0]===GB.rallyKey) o.selected=true; sel.appendChild(o); });
+      sel.addEventListener("change", function(){ GB.rallyKey=sel.value; gbLoad(); });
+      lab.appendChild(sel); box.appendChild(lab);
+    }
     if(!res.ok){ var e=document.createElement("p"); e.className="muted";
       e.textContent = res.code===404 ? "This Arena doesn't keep game boards yet: ask its owner to update it." : (res.j.error||"Pair with an Arena to see the boards."); box.appendChild(e); return; }
     var boards=res.j.boards||[];
     if(!boards.length){ var n=document.createElement("p"); n.className="muted"; n.textContent="No finished games yet. Race, run, putt or blast with friends in the Valley and the times land here."; box.appendChild(n); return; }
     boards.forEach(function(bd){
-      var h=document.createElement("h4"); h.className="gb-key"; h.textContent=bd.key==="match" || bd.key==="all" ? "All races" : GB.game==="td" ? String(bd.key).replace("-", " · ") : bd.key; box.appendChild(h);
+      var rk = rkeys ? rkeys.filter(function(k){ return k[0]===bd.key; })[0] : null;
+      var h=document.createElement("h4"); h.className="gb-key"; h.textContent=bd.key==="match" || bd.key==="all" ? "All races" : GB.game==="td" ? String(bd.key).replace("-", " · ") : rk ? rk[1] : bd.key; box.appendChild(h);
       var tbl=document.createElement("table"); tbl.className="gb-table";
       var cols = GB.game==="td" ? ["#","Trainer","Waves","Played"] : GB.game==="bowl" ? ["#","Trainer","Best","Wins","Played"]
                : GB.game==="type" ? ["#","Trainer","Best WPM","Accuracy","Wins"] : GB.game==="fps" ? ["#","Trainer","Kills","K/D","Played"] : GB.game==="golf" ? ["#","Trainer","Best (strokes)","Wins","Played"]

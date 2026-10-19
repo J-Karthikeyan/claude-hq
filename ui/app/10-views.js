@@ -86,7 +86,7 @@ Array.prototype.forEach.call(document.querySelectorAll(".viewtab"),function(t){
 });
 
 /* ---- Valley minigames: loaded from /games/ on first use (keeps this file from growing) ---- */
-var VALLEY_FILES = ["core","engine","fishart","fishing","garden","bundles","mines","pokedata","pokebattle","battle","puzzle","town","festival","arcade","multi","golf","input","kart","platformer","fps","strike","typerace","trackedit","leveledit","mapedit","td","bowling","story"];
+var VALLEY_FILES = ["core","engine","fishart","fishing","garden","bundles","mines","pokedata","pokebattle","battle","puzzle","town","festival","arcade","multi","golf","input","kart","rally","platformer","fps","strike","typerace","trackedit","leveledit","mapedit","td","bowling","story"];
 var VALLEY_LOAD = null;
 function valleyLoad(){
   if(VALLEY_LOAD) return VALLEY_LOAD;
@@ -127,7 +127,7 @@ function valleyPillSync(){
 }
 // Valley multiplayer traffic from the Arena room. Join notices and invites work even
 // before the Valley view has ever been opened; everything else goes to games/multi.js.
-var VALLEY_GAME_NAMES = {pond:"Fishing Pond", race:"Puzzle Race", duel:"Creature Duel", mines:"Co-op Mines", farm:"Shared Farm", golf:"Mini Golf", kart:"Kart Racing", plat:"Platformer Rush", fps:"Blaster Arena", strike:"Strikezone", type:"Code Typing Race", td:"Tower Defense", bowl:"Bowling"};
+var VALLEY_GAME_NAMES = {pond:"Fishing Pond", race:"Puzzle Race", duel:"Creature Duel", mines:"Co-op Mines", farm:"Shared Farm", golf:"Mini Golf", kart:"Kart Racing", rally:"Valley Rally", plat:"Platformer Rush", fps:"Blaster Arena", strike:"Strikezone", type:"Code Typing Race", td:"Tower Defense", bowl:"Bowling"};
 function valleyOnGame(m){
   if(m && m.g==="party"){ if(typeof partyOnGame==="function") partyOnGame(m); return; }
   if(m && m.g==="hq"){ if(typeof hqNetOnGame==="function") hqNetOnGame(m); return; }      // HQ presence on the shared socket

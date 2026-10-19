@@ -509,7 +509,7 @@ static MAP_ROOM_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(hq_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|r_[A-Za-z0-9_-]{22})$").unwrap()
 });
 static CURSOR_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-f]{2,400}$").unwrap());
-const MAP_KINDS: [&str; 3] = ["kart", "plat", "fps"];
+const MAP_KINDS: [&str; 4] = ["kart", "plat", "fps", "rally"];
 const MAP_SCOPES: [&str; 3] = ["private", "room", "public"];
 const MAP_SORTS: [&str; 3] = ["new", "top", "week"];
 const MAP_REASONS: [&str; 4] = ["spam", "offensive", "broken", "other"];
@@ -1099,6 +1099,13 @@ mod tests {
         for d in [vec![("kind", "golf")], vec![("limit", "31")], vec![("cursor", "zz")], vec![("mine", "1"), ("room", "r_AAAAAAAAAAAAAAAAAAAAAA")]] {
             assert_eq!(list_maps(&app, &arg(&d)).0, 400);
         }
+        // Valley Rally stages are maps too: {seed, biome, night, length, road, gates}
+        let rally = json!({"seed": "pinewood-run", "biome": "forest", "night": false, "length": 3000,
+                           "road": [[0.0, 0.0, 1.5], [0.0, -10.0, 1.6]], "gates": [{"x": 0.0, "z": -150.0, "h": 0, "w": 11}]});
+        assert_eq!(save_map(&app, &json!({"kind": "rally", "name": "Pinewood Run", "data": rally, "scope": "public"})).0, 200);
+        assert_eq!(sent.lock().unwrap().last().unwrap().3.as_ref().unwrap()["kind"], "rally");
+        list_maps(&app, &arg(&[("kind", "rally")]));
+        assert_eq!(sent.lock().unwrap().last().unwrap().1, "https://arena.example/v1/maps?kind=rally");
         like_map(&app, &json!({"id": "m-0123456789ab", "on": true}));
         assert_eq!(sent.lock().unwrap().last().unwrap().1, "https://arena.example/v1/maps/m-0123456789ab/like");
         assert_eq!(like_map(&app, &json!({"id": "m-0123456789ab", "on": 1})).0, 400);

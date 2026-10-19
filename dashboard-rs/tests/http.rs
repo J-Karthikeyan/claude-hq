@@ -155,9 +155,17 @@ fn games_allowlist_etag_and_save() {
     for bad in ["/games/..%2fdashboard.py", "/games/Core.js", "/games/golf/LICENSE-kenney.txt", "/games/golf//straight.glb", "/games/vendor/x.css"] {
         assert_eq!(get(srv.port, bad, "").0, 404, "{}", bad);
     }
-    for good in ["golf/courses.json", "golf/straight.glb", "vendor/three-core.js", "kart/tracks.json", "fps/map.json", "platformer/levels.json", "strike/map.json"] {
+    for good in ["golf/courses.json", "golf/straight.glb", "vendor/three-core.js", "kart/tracks.json", "fps/map.json", "platformer/levels.json", "strike/map.json",
+                 "rally/physics.js", "rally/stage.js", "rally/scene.js"] {
         assert!(srv.app.game_file(good).is_some(), "{}", good);
     }
+    // Valley Rally may serve scripts from its own folder; no other folder may, and nothing deeper
+    for bad in ["rally/tools/tune.js", "rally/../core.js", "rally/Physics.js", "rally/x.glb", "rally/missing.js", "kart/x.js", "golf/x.js"] {
+        assert!(srv.app.game_file(bad).is_none(), "{}", bad);
+    }
+    let (code, head, _) = get(srv.port, "/games/rally/physics.js", "");
+    assert_eq!(code, 200);
+    assert!(head.contains("application/javascript"));
     let (code, head, _) = get(srv.port, "/games/golf/courses.json", "");
     assert_eq!(code, 200);
     assert!(head.contains("cache-control: no-cache"));

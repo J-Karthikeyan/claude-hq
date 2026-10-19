@@ -71,10 +71,10 @@ pub const CALI_ITEM_KEYS: [&str; 11] =
 const HQ_LOOK_KEYS: [&str; 3] = ["paint", "accent", "sign"];
 const HQ_CREW_KEYS: [&str; 3] = ["working", "needs", "idle"];
 pub const PORTRAIT_MAX_BYTES: usize = 64 * 1024;
-const GAMES: [&str; 7] = ["kart", "plat", "fps", "golf", "type", "td", "bowl"];
+const GAMES: [&str; 8] = ["kart", "plat", "fps", "golf", "type", "td", "bowl", "rally"];
 const COS_SLOTS: [&str; 6] = ["kart", "runner", "blaster", "ball", "frame", "decor"];
 const MARKET_CATS: [&str; 5] = ["fish", "crop", "ore", "gem", "misc"];
-pub const QUICKPLAY_GAMES: [&str; 5] = ["kart", "plat", "fps", "golf", "type"];
+pub const QUICKPLAY_GAMES: [&str; 6] = ["kart", "plat", "fps", "golf", "type", "rally"];
 
 pub fn valid_room_id(v: &Value) -> bool {
     v.as_str().map(|s| ROOM_ID_RE.is_match(s)).unwrap_or(false)
@@ -1023,6 +1023,21 @@ pub(crate) mod tests {
         assert_eq!(s[0].1, "https://arena.example/v1/pantry");
         assert_eq!(s[1].3, Some(json!({"requestId": rid, "kind": "berry"})));
         assert_eq!(s[2].3, Some(json!({})));
+        assert_eq!(s.len(), 3);
+    }
+
+    #[test]
+    fn rally_boards_and_quickplay() {
+        let (_d, app) = app();
+        let sent = stub(&app, "https://arena.example", Arc::new(Mutex::new((200, json!({"entries": []})))));
+        assert_eq!(app.arena_leaderboards("rally", Some("c-0123456789ab")).0, 200);
+        assert_eq!(app.arena_leaderboards("rally", Some("../x")).0, 200);
+        assert_eq!(app.arena_leaderboards("rallyx", None).0, 400);
+        assert_eq!(app.arena_quickplay("join", &json!({"game": "rally"})).0, 200);
+        let s = sent.lock().unwrap();
+        assert_eq!(s[0].1, "https://arena.example/v1/leaderboards/rally?key=c-0123456789ab");
+        assert_eq!(s[1].1, "https://arena.example/v1/leaderboards/rally");
+        assert_eq!(s[2].3, Some(json!({"game": "rally"})));
         assert_eq!(s.len(), 3);
     }
 
