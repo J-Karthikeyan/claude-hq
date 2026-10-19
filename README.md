@@ -891,14 +891,26 @@ and feature guide.
 Thanks to everyone who has contributed to Claude HQ:
 
 - [@RoString36222](https://github.com/RoString36222) — creator & maintainer (fleet view, search,
-  analytics, digests, the creature / evolution / Mega system, and the Village mini-game)
-- [@SwastikTripathi](https://github.com/SwastikTripathi) — editable Trainer name setting (#1) and
-  Arena contributions
-- [@hetnxik](https://github.com/hetnxik) (Het Naik) — Arena fixes: SSL/startup crash fixes and
-  stopping browser-shortcut hijacking (#1.1.1)
-- [@shreyash73](https://github.com/shreyash73) (Shreyash Shanbhag) — Arena self-hosting & ops
-  tooling (docker-compose + Caddy, VPS bootstrap, containerized deploy panel, auto-deploy) and the
-  alternative Rust Arena backend (#1.2.1)
+  analytics, digests, the creature / evolution / Mega system, the Village, the Valley games, the
+  3D HQ and Arena City, HQ Notch, and the HQ 2.x releases)
+- [@hetnxik](https://github.com/hetnxik) (Het Naik) — the Arena (#2): multiplayer leaderboard,
+  seasons and game rooms; self-hosting and ops (docker-compose + Caddy, VPS bootstrap, the
+  containerized deploy panel, pull-based auto-deploy and the deploy console, #23–#38, #94–#111);
+  Cali Tuesdays (#36); the Rust Arena (#90–#93) and the Rust HQ server `dashboard-rs` (#109);
+  Arena City on a grid (#110); and the Rust-only backend restructure (#117, #119)
+- [@SwastikTripathi](https://github.com/SwastikTripathi) — editable Trainer name (#1); Arena
+  fixes for the blank-dashboard crash, SSL on python.org Python and browser-shortcut hijacking
+  (#3, #4); nudges, chat @-mentions and the publish-health dot (#7–#24); unit tests + CI (#5);
+  the daily budget alert (#6); creature fatigue and Poke Coins (#31); Arena rooms, quests &
+  achievements (#32); the General Store (#41); and the Cali diner tab (#58, #60)
+- [@shreyash73](https://github.com/shreyash73) (Shreyash Shanbhag) — Arena lobby chat with history
+  (#10, #14), the voice channel with video, screen sharing and call shortcuts (#12, #20, #22), the
+  sidebar-shell redesign with the sessions-first Live view and thinking orbs (#30), and the
+  "haan yeaaah" button (#39)
+- [@MustafaAsad198](https://github.com/MustafaAsad198) — Cursor sessions (#95), the space-jump
+  avatar in the HQ (#101) and Strikezone (#105, #113)
+- [@J-Karthikeyan](https://github.com/J-Karthikeyan) — the soundboard with browser uploads (#40)
+  and the account board (#116)
 
 Made with [Claude Code](https://claude.com/claude-code).
 
