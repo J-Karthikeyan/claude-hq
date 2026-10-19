@@ -27,13 +27,75 @@ pub fn which(name: &str, path: &str) -> Option<String> {
     None
 }
 
+/// The path this process was started from, read once: after a rebuild has
+/// replaced the file, Linux would report the old inode as "... (deleted)".
+pub fn boot_exe() -> Option<PathBuf> {
+    static EXE: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    EXE.get_or_init(|| std::env::current_exe().ok()).clone()
+}
+
+fn mtime_ns(p: &Path) -> Option<i128> {
+    let m = std::fs::metadata(p).ok()?;
+    use std::os::unix::fs::MetadataExt;
+    Some(m.mtime() as i128 * 1_000_000_000 + m.mtime_nsec() as i128)
+}
+
 /// The running binary's mtime: when the code on disk moves on, the server
 /// reports itself as "stale" until it restarts.
 pub fn code_sig() -> Option<i128> {
-    let exe = std::env::current_exe().ok()?;
-    let m = std::fs::metadata(exe).ok()?;
-    use std::os::unix::fs::MetadataExt;
-    Some(m.mtime() as i128 * 1_000_000_000 + m.mtime_nsec() as i128)
+    mtime_ns(&boot_exe()?)
+}
+
+/// Seconds the self-update gives `cargo build` (a cold release build of
+/// claudehq takes a few minutes on a laptop).
+pub const REBUILD_TIMEOUT_SECS: u64 = 900;
+
+/// The cargo profile when `exe` is this checkout's own build
+/// (<here>/dashboard-rs/target/<profile>/claudehq), else None: a binary that
+/// lives anywhere else is never rebuilt behind the user's back.
+pub fn checkout_profile(here: &Path, exe: &Path) -> Option<&'static str> {
+    let exe = crate::state::realpath(exe);
+    let target = crate::state::realpath(&here.join("dashboard-rs").join("target"));
+    let rel = exe.strip_prefix(&target).ok()?;
+    let parts: Vec<String> = rel.iter().map(|c| c.to_string_lossy().into_owned()).collect();
+    match parts.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        ["release", "claudehq"] => Some("release"),
+        ["debug", "claudehq"] => Some("debug"),
+        _ => None,
+    }
+}
+
+/// The newest mtime among the files the claudehq build reads
+/// (Cargo.toml, Cargo.lock, src/**, assets/**).
+pub fn rs_sources_mtime(here: &Path) -> Option<i128> {
+    fn walk(d: &Path, best: &mut Option<i128>) {
+        let Ok(rd) = std::fs::read_dir(d) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, best);
+            } else if let Some(t) = mtime_ns(&p) {
+                *best = Some(best.map_or(t, |b| b.max(t)));
+            }
+        }
+    }
+    let root = here.join("dashboard-rs");
+    let mut best = None;
+    for f in ["Cargo.toml", "Cargo.lock"] {
+        if let Some(t) = mtime_ns(&root.join(f)) {
+            best = Some(best.map_or(t, |b: i128| b.max(t)));
+        }
+    }
+    walk(&root.join("src"), &mut best);
+    walk(&root.join("assets"), &mut best);
+    best
+}
+
+/// The last few lines of a build log, for an error message.
+fn log_tail(s: &str) -> String {
+    let lines: Vec<&str> = s.lines().map(str::trim_end).filter(|l| !l.is_empty()).collect();
+    let tail = lines[lines.len().saturating_sub(6)..].join("\n");
+    py::last_chars(&tail, 600).to_string()
 }
 
 fn home() -> String {
@@ -216,11 +278,85 @@ impl App {
     }
 
     /// How far this checkout is behind its upstream, plus whether this process
-    /// still runs the code on disk.
+    /// still runs the code on disk (its binary was replaced, or this checkout's
+    /// Rust sources are newer than the build it runs).
     pub fn update_status(&self, force: bool) -> Value {
         let mut d = self.update_status_git(force);
-        d["stale"] = Value::Bool(code_sig() != self.boot_code_sig);
+        d["stale"] = Value::Bool(code_sig() != self.boot_code_sig || self.rs_binary_outdated());
         d
+    }
+
+    fn running_exe(&self) -> Option<PathBuf> {
+        self.exe_hook.read().unwrap().clone().or_else(boot_exe)
+    }
+
+    /// The running binary is this checkout's build and older than its sources.
+    pub fn rs_binary_outdated(&self) -> bool {
+        let Some(exe) = self.running_exe() else { return false };
+        if checkout_profile(&self.paths.here, &exe).is_none() {
+            return false;
+        }
+        matches!((rs_sources_mtime(&self.paths.here), mtime_ns(&exe)), (Some(s), Some(b)) if s > b)
+    }
+
+    /// Did anything under dashboard-rs/ change between two commits? A failing
+    /// `git diff` counts as a change (rebuilding is the safe side).
+    pub fn rs_changed_between(&self, old: &str, new: &str) -> bool {
+        !matches!(self.git(&["diff", "--quiet", old, new, "--", "dashboard-rs"], 30), Ok((0, _, _)))
+    }
+
+    /// cargo on PATH, else rustup's ~/.cargo/bin/cargo (launchd's PATH has no ~/.cargo/bin).
+    fn cargo_path(&self) -> Option<PathBuf> {
+        if let Some(c) = self.cargo_hook.read().unwrap().clone() {
+            return Some(c);
+        }
+        if let Some(c) = which("cargo", &std::env::var("PATH").unwrap_or_default()) {
+            return Some(PathBuf::from(c));
+        }
+        let c = PathBuf::from(home()).join(".cargo/bin/cargo");
+        is_executable(&c).then_some(c)
+    }
+
+    /// Rebuild the running claudehq in place with cargo, so the restart that
+    /// follows runs the new code. Err(why + how to fix it by hand).
+    pub fn rebuild_rs(&self) -> Result<(), String> {
+        let exe = self.running_exe();
+        let profile = exe.as_deref().and_then(|e| checkout_profile(&self.paths.here, e));
+        let hint = |p: Option<&str>| {
+            format!("; run cargo build{} --manifest-path dashboard-rs/Cargo.toml", if p == Some("debug") { "" } else { " --release" })
+        };
+        let Some(profile) = profile else {
+            let at = exe.map(|e| e.display().to_string()).unwrap_or_else(|| "an unknown path".into());
+            return Err(format!("it runs from {}, not from this checkout's dashboard-rs/target{} and restart it", at, hint(None)));
+        };
+        let Some(cargo) = self.cargo_path() else {
+            return Err(format!("cargo was not found (install Rust from rustup.rs){}", hint(Some(profile))));
+        };
+        let mut cmd = Command::new(cargo);
+        cmd.arg("build");
+        if profile == "release" {
+            cmd.arg("--release");
+        }
+        cmd.arg("--locked").arg("--manifest-path").arg(self.paths.here.join("dashboard-rs").join("Cargo.toml")).current_dir(&self.paths.here);
+        match run_timeout(&mut cmd, REBUILD_TIMEOUT_SECS) {
+            Ok((0, _, _)) => {
+                // cargo leaves the binary alone when nothing it tracks changed;
+                // touch it so "stale" (sources newer than the binary) settles.
+                if let Some(e) = self.running_exe() {
+                    if let Ok(f) = std::fs::File::open(&e) {
+                        let _ = f.set_modified(std::time::SystemTime::now());
+                    }
+                }
+                Ok(())
+            }
+            Ok((rc, out, err)) => {
+                let tail = log_tail(&format!("{}\n{}", out, err));
+                Err(format!("{}{}", if tail.is_empty() { format!("cargo build exited with {}", rc) } else { tail }, hint(Some(profile))))
+            }
+            Err(crate::payload::RunErr::Timeout) => Err(format!("cargo build took longer than {} s{}", REBUILD_TIMEOUT_SECS, hint(Some(profile)))),
+            Err(crate::payload::RunErr::NotFound) => Err(format!("cargo was not found{}", hint(Some(profile)))),
+            Err(crate::payload::RunErr::Other(e)) => Err(format!("{}{}", e, hint(Some(profile)))),
+        }
     }
 
     fn schedule_restart(&self) {
@@ -244,8 +380,16 @@ impl App {
             }
             v
         };
+        // Rust only: a restart must run the code on disk, so a build that is
+        // older than this checkout's sources is rebuilt first.
+        let rebuild_failed = |st: Value, why: String| (409, with(st, json!({"ok": false, "restarting": false, "error": format!("could not rebuild claudehq: {}", why)})));
         if st["ok"] != true {
             if st["stale"] == true {
+                if self.rs_binary_outdated() {
+                    if let Err(why) = self.rebuild_rs() {
+                        return rebuild_failed(json!({"updated": false}), why);
+                    }
+                }
                 self.schedule_restart();
                 return (200, json!({"ok": true, "updated": false, "restarting": true}));
             }
@@ -254,6 +398,11 @@ impl App {
         let behind = st["behind"].as_i64().unwrap_or(0);
         let ahead = st["ahead"].as_i64().unwrap_or(0);
         if behind == 0 && st["stale"] == true {
+            if self.rs_binary_outdated() {
+                if let Err(why) = self.rebuild_rs() {
+                    return rebuild_failed(with(st, json!({"updated": false})), why);
+                }
+            }
             *self.update_cache.lock().unwrap() = (0.0, None);
             self.schedule_restart();
             return (200, with(st, json!({"updated": false, "restarting": true})));
@@ -279,8 +428,16 @@ impl App {
         }
         let new = self.git(&["rev-parse", "--short", "HEAD"], 30).map(|r| py::strip(&r.1).to_string()).unwrap_or_default();
         *self.update_cache.lock().unwrap() = (0.0, None);
+        let done = json!({"ok": true, "updated": true, "from": old, "to": new, "commits": st["commits"], "count": behind, "restarting": true});
+        // The pull brought new Rust code (or the build was already behind):
+        // rebuild before the restart, or keep running and say how to finish.
+        if self.rs_changed_between(old.as_str().unwrap_or("HEAD"), &new) || self.rs_binary_outdated() {
+            if let Err(why) = self.rebuild_rs() {
+                return (409, with(done, json!({"ok": false, "restarting": false, "error": format!("updated the code but could not rebuild claudehq: {}", why)})));
+            }
+        }
         self.schedule_restart();
-        (200, json!({"ok": true, "updated": true, "from": old, "to": new, "commits": st["commits"], "count": behind, "restarting": true}))
+        (200, done)
     }
 
     // ---- stats ---------------------------------------------------------------
@@ -345,7 +502,7 @@ pub fn restart_self() {
         }
     }
     use std::os::unix::process::CommandExt;
-    if let Ok(exe) = std::env::current_exe() {
+    if let Some(exe) = boot_exe() {
         let args: Vec<String> = std::env::args().skip(1).collect();
         let e = Command::new(exe).args(args).exec();
         eprintln!("restart failed: {}", e);
@@ -551,5 +708,112 @@ mod tests {
         assert_eq!(std::fs::read_to_string(mine.join("a.txt")).unwrap(), "second");
         std::thread::sleep(std::time::Duration::from_millis(1300));
         assert_eq!(*restarts.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn only_this_checkouts_build_is_rebuilt() {
+        let here = Path::new("/hq");
+        assert_eq!(checkout_profile(here, Path::new("/hq/dashboard-rs/target/release/claudehq")), Some("release"));
+        assert_eq!(checkout_profile(here, Path::new("/hq/dashboard-rs/target/debug/claudehq")), Some("debug"));
+        assert_eq!(checkout_profile(here, Path::new("/hq/dashboard-rs/target/debug/deps/claudehq-0123abcd")), None);
+        assert_eq!(checkout_profile(here, Path::new("/usr/local/bin/claudehq")), None);
+        assert_eq!(checkout_profile(here, Path::new("/other/dashboard-rs/target/release/claudehq")), None);
+        assert_eq!(log_tail("a\n\nb\nc\nd\ne\nf\ng\n"), "b\nc\nd\ne\nf\ng");
+    }
+
+    fn set_mtime(p: &Path, t: std::time::SystemTime) {
+        std::fs::File::open(p).unwrap().set_modified(t).unwrap();
+    }
+
+    /// A stand-in cargo: logs its arguments, then exits with `rc` after printing `msg`.
+    fn fake_cargo(dir: &Path, rc: i32, msg: &str) -> PathBuf {
+        let p = dir.join(format!("cargo-{}", rc));
+        let log = dir.join("cargo.log");
+        std::fs::write(&p, format!("#!/bin/sh\necho \"$@\" >> '{}'\necho '{}' >&2\nexit {}\n", log.display(), msg, rc)).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        p
+    }
+
+    #[test]
+    fn self_update_rebuilds_new_rust_code_before_restarting() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (origin, other, mine) = (tmp.path().join("origin.git"), tmp.path().join("other"), tmp.path().join("mine"));
+        assert!(Command::new("git").args(["init", "-q", "--bare", "-b", "main"]).arg(&origin).status().unwrap().success());
+        assert!(Command::new("git").args(["clone", "-q"]).arg(&origin).arg(&other).output().unwrap().status.success());
+        std::fs::create_dir_all(other.join("dashboard-rs/src")).unwrap();
+        std::fs::write(other.join("dashboard-rs/src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(other.join("dashboard-rs/Cargo.toml"), "[package]\n").unwrap();
+        std::fs::write(other.join(".gitignore"), "target/\n").unwrap();
+        std::fs::write(other.join("a.txt"), "one").unwrap();
+        git(&other, &["add", "-A"]);
+        git(&other, &["commit", "-q", "-m", "first"]);
+        git(&other, &["push", "-q", "origin", "HEAD:main"]);
+        assert!(Command::new("git").args(["clone", "-q"]).arg(&origin).arg(&mine).output().unwrap().status.success());
+
+        let (_d, base) = app();
+        let mut paths = base.paths.clone();
+        paths.here = mine.clone();
+        let app = App::new(paths);
+        let exe = mine.join("dashboard-rs/target/release/claudehq");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, "old binary").unwrap();
+        let now = std::time::SystemTime::now;
+        set_mtime(&exe, now() + std::time::Duration::from_secs(5)); // built after the checkout
+        *app.exe_hook.write().unwrap() = Some(exe.clone());
+        let restarts = std::sync::Arc::new(std::sync::Mutex::new(0));
+        let r2 = restarts.clone();
+        *app.restart_hook.write().unwrap() = Some(std::sync::Arc::new(move || *r2.lock().unwrap() += 1));
+        let log = tmp.path().join("cargo.log");
+        *app.cargo_hook.write().unwrap() = Some(fake_cargo(tmp.path(), 0, "Finished"));
+        assert_eq!(app.update_status(true)["stale"], false);
+
+        // 1. A pull that does not touch dashboard-rs/: no build, straight to the restart.
+        std::fs::write(other.join("a.txt"), "two").unwrap();
+        git(&other, &["commit", "-qam", "page only"]);
+        git(&other, &["push", "-q", "origin", "HEAD:main"]);
+        let (code, resp) = app.update_and_restart();
+        assert_eq!((code, resp["restarting"].clone()), (200, json!(true)));
+        assert!(!log.exists(), "cargo ran for a page-only pull");
+
+        // 2. New Rust code and a build that fails: the code stays pulled, no restart, the fix is named.
+        std::fs::write(other.join("dashboard-rs/src/main.rs"), "fn main() { new() }\n").unwrap();
+        git(&other, &["commit", "-qam", "rust change"]);
+        git(&other, &["push", "-q", "origin", "HEAD:main"]);
+        *app.cargo_hook.write().unwrap() = Some(fake_cargo(tmp.path(), 101, "error[E0425]: cannot find function `new`"));
+        let (code, resp) = app.update_and_restart();
+        assert_eq!(code, 409);
+        assert_eq!((resp["updated"].clone(), resp["restarting"].clone(), resp["ok"].clone()), (json!(true), json!(false), json!(false)));
+        let err = resp["error"].as_str().unwrap();
+        assert!(err.starts_with("updated the code but could not rebuild claudehq: "), "{}", err);
+        assert!(err.contains("error[E0425]") && err.ends_with("run cargo build --release --manifest-path dashboard-rs/Cargo.toml"), "{}", err);
+        assert_eq!(std::fs::read_to_string(mine.join("dashboard-rs/src/main.rs")).unwrap(), "fn main() { new() }\n");
+        assert!(std::fs::read_to_string(&log).unwrap().contains("build --release --locked --manifest-path"));
+
+        // 3. Up to date, but the build is older than the sources: "stale"; the restart rebuilds first.
+        set_mtime(&exe, now() - std::time::Duration::from_secs(60));
+        let st = app.update_status(true);
+        assert_eq!((st["behind"].clone(), st["stale"].clone()), (json!(0), json!(true)));
+        let (code, resp) = app.update_and_restart();
+        assert_eq!(code, 409);
+        assert!(resp["error"].as_str().unwrap().starts_with("could not rebuild claudehq: error[E0425]"), "{}", resp);
+        *app.cargo_hook.write().unwrap() = Some(fake_cargo(tmp.path(), 0, "Finished"));
+        let (code, resp) = app.update_and_restart();
+        assert_eq!((code, resp["restarting"].clone()), (200, json!(true)));
+        assert!(!app.rs_binary_outdated()); // the build (here: the touch) settled it
+        *app.cargo_hook.write().unwrap() = Some(tmp.path().join("no-such-cargo"));
+        set_mtime(&exe, now() - std::time::Duration::from_secs(60));
+        assert!(app.update_and_restart().1["error"].as_str().unwrap().contains("cargo was not found"));
+
+        // 4. A claudehq that is not this checkout's build is never rebuilt behind the user's back.
+        set_mtime(&exe, now() + std::time::Duration::from_secs(5));
+        *app.exe_hook.write().unwrap() = Some(PathBuf::from("/usr/local/bin/claudehq"));
+        std::fs::write(other.join("dashboard-rs/src/main.rs"), "fn main() {}\n").unwrap();
+        git(&other, &["commit", "-qam", "rust fix"]);
+        git(&other, &["push", "-q", "origin", "HEAD:main"]);
+        let (code, resp) = app.update_and_restart();
+        assert_eq!(code, 409);
+        assert!(resp["error"].as_str().unwrap().contains("it runs from /usr/local/bin/claudehq, not from this checkout's dashboard-rs/target"), "{}", resp);
+        std::thread::sleep(std::time::Duration::from_millis(1300));
+        assert_eq!(*restarts.lock().unwrap(), 2);
     }
 }

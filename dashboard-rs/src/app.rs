@@ -56,6 +56,9 @@ pub struct Paths {
     pub music_cache: PathBuf,
     pub arena_link: PathBuf,
     pub loot_state: PathBuf,
+    pub evo: PathBuf,
+    pub notch_installer: PathBuf,
+    pub notch_app: PathBuf,
 }
 
 impl Paths {
@@ -79,6 +82,9 @@ impl Paths {
             music_cache: here.join(".music-cache"),
             arena_link: here.join("arena-link.json"),
             loot_state: here.join("loot-state.json"),
+            evo: here.join("evo-choices.json"),
+            notch_installer: here.join("notch").join("tools").join("install.py"),
+            notch_app: home.join("Applications").join("HQ Notch.app"),
         }
     }
 }
@@ -120,15 +126,21 @@ pub struct App {
     /// Guards meals.json; holds the requestIds with an eat in flight.
     pub(crate) meals_lock: Mutex<HashSet<String>>,
     pub(crate) games_lock: Mutex<()>,
+    pub(crate) evo_lock: Mutex<()>,
+    pub(crate) evo_tables: std::sync::OnceLock<crate::evo::EvoTables>,
     pub(crate) dex_salt: Mutex<Option<String>>,
     pub(crate) update_cache: Mutex<(f64, Option<Value>)>,
     pub arena: crate::arena::ArenaState,
     pub music: Arc<crate::music::MusicState>,
     pub ext: crate::ext::ExtState,
+    pub notch: crate::notch::NotchState,
     /// Replaces `claude agents --json` (tests).
     pub agents_hook: RwLock<Option<AgentsFn>>,
     /// Replaces the self-restart after an update (tests).
     pub restart_hook: RwLock<Option<Arc<dyn Fn() + Send + Sync>>>,
+    /// Replace the running binary's path and the cargo the self-update rebuilds with (tests).
+    pub exe_hook: RwLock<Option<PathBuf>>,
+    pub cargo_hook: RwLock<Option<PathBuf>>,
 }
 
 impl App {
@@ -151,13 +163,18 @@ impl App {
             meta_lock: Mutex::new(()),
             meals_lock: Mutex::new(HashSet::new()),
             games_lock: Mutex::new(()),
+            evo_lock: Mutex::new(()),
+            evo_tables: std::sync::OnceLock::new(),
             dex_salt: Mutex::new(None),
             update_cache: Mutex::new((0.0, None)),
             arena: crate::arena::ArenaState::default(),
             music: Arc::new(crate::music::MusicState::default()),
             ext: crate::ext::ExtState::default(),
+            notch: crate::notch::NotchState::default(),
             agents_hook: RwLock::new(None),
             restart_hook: RwLock::new(None),
+            exe_hook: RwLock::new(None),
+            cargo_hook: RwLock::new(None),
         }
     }
 

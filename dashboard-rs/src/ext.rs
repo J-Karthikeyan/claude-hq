@@ -20,7 +20,7 @@ pub type Resp = (u16, Value);
 pub type GetFn = fn(&App, &dyn Fn(&str) -> String) -> Resp;
 pub type PostFn = fn(&App, &Value) -> Resp;
 
-/// GET routes in dashboard.py's EXT order (skills, loot, prestige, maps, cups, boss).
+/// GET routes in dashboard.py's EXT order (skills, loot, prestige, maps, cups, boss, notch).
 pub const GET: &[(&str, GetFn)] = &[
     ("/api/arena/skills", get_skills),
     ("/api/skills/local", get_local),
@@ -36,6 +36,7 @@ pub const GET: &[(&str, GetFn)] = &[
     ("/api/arena/cups/trophies", cup_trophies),
     ("/api/arena/boss", boss_state),
     ("/api/arena/boss/badges", boss_badges),
+    ("/api/notch/status", crate::notch::get_status),
 ];
 
 pub const POST: &[(&str, PostFn)] = &[

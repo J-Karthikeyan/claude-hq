@@ -49,12 +49,12 @@ pub fn post_body_limit(path: &str) -> usize {
 /// Every state-changing route; anything else 404s locally.
 pub fn post_paths() -> Vec<&'static str> {
     let mut v = vec![
-        "/api/update", "/api/action", "/api/config", "/api/meta", "/api/arena/pair", "/api/arena/unpair", "/api/arena/publish",
+        "/api/update", "/api/action", "/api/config", "/api/meta", "/api/evo-choice", "/api/arena/pair", "/api/arena/unpair", "/api/arena/publish",
         "/api/arena/ticket", "/api/arena/nudge", "/api/arena/pantry/claim", "/api/arena/pantry/buy", "/api/arena/pantry/eat",
         "/api/arena/pantry/give", "/api/arena/pantry/reward", "/api/arena/hq/me", "/api/arena/portrait", "/api/arena/cosmetics/buy",
         "/api/arena/cosmetics/equip", "/api/arena/market/sell", "/api/arena/crews/create", "/api/arena/crews/join",
         "/api/arena/crews/leave", "/api/arena/quickplay/join", "/api/arena/quickplay/leave", "/api/arena/cali/order",
-        "/api/arena/sounds", "/api/games/state",
+        "/api/arena/sounds", "/api/games/state", "/api/notch/install",
     ];
     v.extend(ARENA_ROOM_POSTS);
     v.extend(ext::POST.iter().map(|(p, _)| *p));
@@ -763,7 +763,7 @@ fn constant_eq(a: &[u8], b: &[u8]) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-fn post_route(app: &App, path: &str, body: &Value) -> Reply {
+fn post_route(app: &Arc<App>, path: &str, body: &Value) -> Reply {
     let b = body.as_object().unwrap();
     if path.starts_with("/api/arena/") {
         let (code, resp) = arena_post(app, path, body);
@@ -782,6 +782,19 @@ fn post_route(app: &App, path: &str, body: &Value) -> Reply {
             Ok(v) => Reply::json(200, &v),
             Err(crate::app::SaveError::Bad(e)) => Reply::json(400, &json!({"error": format!("bad save: {}", e)})),
             Err(crate::app::SaveError::Io(e)) => Reply::json(500, &json!({"error": format!("could not write save: {}", e)})),
+        },
+        "/api/notch/install" => {
+            // HQ Notch from HQ (ext_notch.py): the same install as `python3 notch/tools/install.py`
+            let (c, r) = app.notch_install();
+            Reply::json(c, &r)
+        }
+        "/api/evo-choice" => match app.save_evo_choice(b.get("sessionId"), b) {
+            Ok(entry) => {
+                app.invalidate_payload_memo(); // the next /api/sessions carries it
+                Reply::json(200, &json!({"sessionId": b.get("sessionId"), "evo": entry}))
+            }
+            Err(crate::evo::EvoError::Bad(e)) => Reply::json(400, &json!({"error": e})),
+            Err(crate::evo::EvoError::Io(e)) => Reply::json(500, &json!({"error": format!("could not save the pick: {}", e)})),
         },
         "/api/meta" => {
             let sid = b.get("sessionId").and_then(|v| v.as_str()).filter(|s| crate::app::is_uuid_match(s));
