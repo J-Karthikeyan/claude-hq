@@ -191,7 +191,7 @@ function makeGame(host, opts){
         setOpt("car", i); if(mp && MP) MP.send("rally", "car", {car: i}); renderMenu();
       });
       var sw = api.mk("i", "vg-kart-sw"); sw.style.background = CAR_SWATCH[i]; sw.setAttribute("aria-hidden", "true"); b.appendChild(sw);
-      var t = api.mk("span", "vg-rally-carname"); t.appendChild(api.mk("b", null, c.name)); t.appendChild(api.mk("small", null, c.kind + " · " + DIFFS[c.drive] + " · " + Math.round(maxPower(c)) + " hp"));
+      var t = api.mk("span", "vg-rally-carname"); t.appendChild(api.mk("b", null, c.name)); t.appendChild(api.mk("small", null, c.kind + " · " + Math.round(maxPower(c)) + " hp · " + (c.note || DIFFS[c.drive])));
       b.appendChild(t); b.setAttribute("aria-pressed", i === mine ? "true" : "false");
       cars.appendChild(b);
     });

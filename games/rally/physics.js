@@ -62,7 +62,7 @@ SURFACES.forEach(function(s, i){ SURF_INDEX[s.id] = i; });
 // curve: [rpm, Nm] full-throttle torque. gears: forward ratios; final: final drive.
 // split: share of torque to the front axle (AWD). diff locks: preload Nm + ramp x input.
 var CARS = [
-  {id: "moraine", name: "Moraine T4", kind: "AWD turbo hatch", drive: "awd", eng: "turbo4", plate: "MORAINE",
+  {id: "moraine", name: "Moraine T4", kind: "AWD turbo hatch", drive: "awd", eng: "turbo4", plate: "MORAINE", note: "grippy and forgiving",
    mass: 1250, inertia: [1750, 1980, 560], a: 1.14, b: 1.36, track: 1.52, hpY: 0.0, lfree: 0.33, travel: 0.25, radius: 0.315, wheelI: 1.15,
    spring: [31000, 28000], bump: [2300, 2100], rebound: [3600, 3300], arb: [9000, 7500],
    engine: {idle: 900, redline: 7200, limiter: 7500, launch: 3800, inertia: 0.20, turbo: 0.35, brake: 55,
@@ -71,7 +71,7 @@ var CARS = [
    split: 0.36, centre: [70, 0.12], frontDiff: [25, 0.08], rearDiff: [140, 0.45],
    brake: 3900, bias: 0.78, hand: 2600, cda: 0.80, cla: 0.30, lock: 0.66, rcLift: 0.30, kyF: 1.0, kyR: 0.8,
    colors: {body: "#e9eef2", stripe: "#d94b3d", stripe2: "#2f5fb3", rim: "#d8d2c4", glass: "#1d2733"}},
-  {id: "saltcedar", name: "Saltcedar 240R", kind: "RWD coupe", drive: "rwd", eng: "six", plate: "SALTCDR",
+  {id: "saltcedar", name: "Saltcedar 240R", kind: "RWD coupe", drive: "rwd", eng: "six", plate: "SALTCDR", note: "tail-happy: feather the throttle",
    mass: 1180, inertia: [1650, 1900, 520], a: 1.22, b: 1.33, track: 1.50, hpY: 0.0, lfree: 0.33, travel: 0.24, radius: 0.315, wheelI: 1.1,
    spring: [30000, 26000], bump: [2200, 2000], rebound: [3400, 3100], arb: [11000, 6500],
    engine: {idle: 850, redline: 7800, limiter: 8100, launch: 3400, inertia: 0.18, turbo: 0, brake: 50,
@@ -80,7 +80,7 @@ var CARS = [
    split: 0, centre: [0, 0], frontDiff: [0, 0], rearDiff: [100, 0.32],
    brake: 3800, bias: 0.76, hand: 2100, cda: 0.74, cla: 0.22, lock: 0.68, rcLift: 0.30, kyF: 1.0, kyR: 0.78,
    colors: {body: "#2e6a4f", stripe: "#f2c641", stripe2: "#f4efe3", rim: "#c9ccd1", glass: "#1a2129"}},
-  {id: "pipit", name: "Pipit Sprint 16", kind: "FWD hot hatch", drive: "fwd", eng: "four", plate: "PIPIT 16",
+  {id: "pipit", name: "Pipit Sprint 16", kind: "FWD hot hatch", drive: "fwd", eng: "four", plate: "PIPIT 16", note: "stable, pulls through corners",
    mass: 1060, inertia: [1450, 1600, 470], a: 0.98, b: 1.42, track: 1.46, hpY: 0.0, lfree: 0.32, travel: 0.23, radius: 0.305, wheelI: 1.0,
    spring: [30000, 22000], bump: [2100, 1700], rebound: [3300, 2800], arb: [7000, 9500],
    engine: {idle: 900, redline: 7600, limiter: 7900, launch: 3600, inertia: 0.15, turbo: 0, brake: 45,
