@@ -232,10 +232,12 @@ function build(opts, doc){
     while(placed < jumps && tries++ < 60){
       var at = 120 + Math.floor(jr()*(n - 260));
       var straight = true;
-      for(j = at - 15; j < at + 20; j++) if(Math.abs(wrapAng(raw[j+1].h - raw[j].h)) > 0.012) straight = false;
+      for(j = at - 20; j < at + 26; j++) if(Math.abs(wrapAng(raw[j+1].h - raw[j].h)) > 0.012) straight = false;
       if(!straight) continue;
-      var A = 1.2 + jr()*1.1;
-      for(j = 0; j < 22; j++){ var u = j/14, b = j < 14 ? smooth(u)*A : A*Math.max(0, 1 - (j - 14)/7); if(at - 14 + j < n) ys[at - 14 + j] += b; }
+      // a 36 m ramp to a crest 0.8-1.6 m proud, then a 20 m fall back: a car at full speed flies
+      // a few lengths and lands on the downslope, not on its nose
+      var A = 0.8 + jr()*0.8;
+      for(j = 0; j < 28; j++){ var u = j/18, b = j < 18 ? smooth(u)*A : A*smooth(1 - (j - 18)/10); if(at - 18 + j < n) ys[at - 18 + j] += b; }
       placed++;
     }
     /* 3. the MapDoc road: every ~10 m, rounded */

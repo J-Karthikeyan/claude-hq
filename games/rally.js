@@ -986,11 +986,12 @@ function makeGame(host, opts){
   // a pure-pursuit driver for the headless test (it only suggests keys; the test presses them)
   V.autopilot = function(){
     if(!V.stage || !V.car) return null;
-    var C = V.car, st = V.stage, L = st.locate(C.p[0], C.p[2], V.hint), A = st.pointAtS(L.s + Math.max(9, C.tel.speed*0.85)), kmax = 0;
-    for(var q = 0; q < 70; q += 7) kmax = Math.max(kmax, Math.abs(st.pointAtS(L.s + q).k));
-    var vT = Math.min(32, Math.sqrt(0.5*9.81*0.75/Math.max(kmax, 1e-3))), fx = -C.M[2], fz = -C.M[8], dx = A.x - C.p[0], dz = A.z - C.p[2];
+    var C = V.car, st = V.stage, L = st.locate(C.p[0], C.p[2], V.hint), A = st.pointAtS(L.s + Math.max(8, C.tel.speed*0.9)), kmax = 0;
+    for(var q = 0; q < Math.max(60, C.tel.speed*2.5); q += 6) kmax = Math.max(kmax, Math.abs(st.pointAtS(L.s + q).k));
+    var mu = (P.SURFACES[C.tel.surface] || {mu: 0.8}).mu;
+    var vT = Math.min(24, Math.sqrt(0.45*9.81*mu/Math.max(kmax, 1e-3))), fx = -C.M[2], fz = -C.M[8], dx = A.x - C.p[0], dz = A.z - C.p[2];
     var ang = Math.atan2(fx*dz - fz*dx, fx*dx + fz*dz), e = vT - C.tel.speed;
-    return {thr: e > -1 ? 1 : 0, brk: e < -3 ? 1 : 0, steer: clamp(ang*2.5, -1, 1), hb: kmax > 1/32 && C.tel.speed > 13 && Math.abs(ang) > 0.25 ? 1 : 0};
+    return {thr: e > 0 ? 1 : 0, brk: e < -2 ? 1 : 0, steer: clamp(ang*2.5, -1, 1), hb: 0};
   };
   V.scene = function(){ return R3; };      // for the browser smoke test
   // (smoke test) put the car 40 m before gate gi, as if the earlier gates were passed

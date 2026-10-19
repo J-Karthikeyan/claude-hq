@@ -32,7 +32,7 @@
 (function(root){
 "use strict";
 
-var G = 9.81, DT = 1/120, SUB = 4, AIR = 1.2, ASSIST_GAIN = 0.8;
+var G = 9.81, DT = 1/120, SUB = 4, AIR = 1.2, ASSIST_GAIN = 1.0;
 var PI = Math.PI, TAU = PI*2;
 
 function clamp(v, a, b){ return v < a ? a : v > b ? b : v; }
@@ -48,12 +48,12 @@ function lerp(a, b, u){ return a + (b - a)*u; }
  * material; rumble: for audio/camera. */
 var SURFACES = [
   {id: "tarmac", name: "Tarmac", mu: 1.08, kx: 0.10, ky: 0.13, C: 1.55, slide: 0.74, ls: 0.10, roll: 0.013, plough: 0.0,   rumble: 0.04},
-  {id: "gravel", name: "Gravel", mu: 0.80, kx: 0.20, ky: 0.29, C: 1.30, slide: 0.92, ls: 0.17, roll: 0.026, plough: 0.024, rumble: 0.45},
-  {id: "dirt",   name: "Dirt",   mu: 0.76, kx: 0.18, ky: 0.26, C: 1.35, slide: 0.90, ls: 0.15, roll: 0.022, plough: 0.018, rumble: 0.32},
-  {id: "grass",  name: "Grass",  mu: 0.56, kx: 0.20, ky: 0.28, C: 1.30, slide: 0.86, ls: 0.15, roll: 0.045, plough: 0.035, rumble: 0.55},
-  {id: "mud",    name: "Mud",    mu: 0.42, kx: 0.26, ky: 0.33, C: 1.20, slide: 0.94, ls: 0.18, roll: 0.090, plough: 0.090, rumble: 0.60},
-  {id: "snow",   name: "Snow",   mu: 0.48, kx: 0.22, ky: 0.31, C: 1.25, slide: 0.95, ls: 0.16, roll: 0.035, plough: 0.040, rumble: 0.22},
-  {id: "loose",  name: "Loose gravel", mu: 0.66, kx: 0.22, ky: 0.31, C: 1.28, slide: 0.93, ls: 0.18, roll: 0.035, plough: 0.045, rumble: 0.70}
+  {id: "gravel", name: "Gravel", mu: 0.80, kx: 0.34, ky: 0.22, C: 1.30, slide: 0.92, ls: 0.17, roll: 0.026, plough: 0.024, rumble: 0.45},
+  {id: "dirt",   name: "Dirt",   mu: 0.76, kx: 0.30, ky: 0.20, C: 1.35, slide: 0.90, ls: 0.15, roll: 0.022, plough: 0.018, rumble: 0.32},
+  {id: "grass",  name: "Grass",  mu: 0.56, kx: 0.30, ky: 0.24, C: 1.30, slide: 0.86, ls: 0.15, roll: 0.045, plough: 0.035, rumble: 0.55},
+  {id: "mud",    name: "Mud",    mu: 0.42, kx: 0.40, ky: 0.28, C: 1.20, slide: 0.94, ls: 0.18, roll: 0.090, plough: 0.090, rumble: 0.60},
+  {id: "snow",   name: "Snow",   mu: 0.48, kx: 0.32, ky: 0.25, C: 1.25, slide: 0.95, ls: 0.16, roll: 0.035, plough: 0.040, rumble: 0.22},
+  {id: "loose",  name: "Loose gravel", mu: 0.66, kx: 0.36, ky: 0.25, C: 1.28, slide: 0.93, ls: 0.18, roll: 0.035, plough: 0.045, rumble: 0.70}
 ];
 var SURF_INDEX = {};
 SURFACES.forEach(function(s, i){ SURF_INDEX[s.id] = i; });
@@ -68,17 +68,17 @@ var CARS = [
    engine: {idle: 900, redline: 7200, limiter: 7500, launch: 3800, inertia: 0.20, turbo: 0.35, brake: 55,
             curve: [[800, 150], [2000, 245], [3000, 355], [4000, 400], [5000, 398], [6000, 368], [7000, 320], [7600, 280]]},
    gears: [3.10, 2.12, 1.60, 1.28, 1.05, 0.88], reverse: 3.2, final: 4.85, eff: 0.88, shiftUp: 6900, shiftTime: 0.14,
-   split: 0.30, centre: [55, 0.08], frontDiff: [25, 0.08], rearDiff: [140, 0.45],
-   brake: 3800, bias: 0.70, hand: 2600, cda: 0.80, cla: 0.30, lock: 0.66, rcLift: 0.30,
+   split: 0.36, centre: [70, 0.12], frontDiff: [25, 0.08], rearDiff: [140, 0.45],
+   brake: 3900, bias: 0.78, hand: 2600, cda: 0.80, cla: 0.30, lock: 0.66, rcLift: 0.30, kyF: 1.0, kyR: 0.8,
    colors: {body: "#e9eef2", stripe: "#d94b3d", stripe2: "#2f5fb3", rim: "#d8d2c4", glass: "#1d2733"}},
   {id: "saltcedar", name: "Saltcedar 240R", kind: "RWD coupe", drive: "rwd", eng: "six", plate: "SALTCDR",
    mass: 1180, inertia: [1650, 1900, 520], a: 1.22, b: 1.33, track: 1.50, hpY: 0.0, lfree: 0.33, travel: 0.24, radius: 0.315, wheelI: 1.1,
    spring: [30000, 26000], bump: [2200, 2000], rebound: [3400, 3100], arb: [11000, 6500],
    engine: {idle: 850, redline: 7800, limiter: 8100, launch: 3400, inertia: 0.18, turbo: 0, brake: 50,
-            curve: [[800, 150], [2000, 205], [3000, 240], [4000, 262], [5000, 280], [6000, 282], [7000, 266], [8200, 230]]},
-   gears: [3.30, 2.25, 1.68, 1.32, 1.08, 0.90], reverse: 3.4, final: 4.55, eff: 0.90, shiftUp: 7550, shiftTime: 0.15,
+            curve: [[800, 125], [2000, 170], [3000, 200], [4000, 218], [5000, 232], [6000, 236], [7000, 224], [8200, 196]]},
+   gears: [3.30, 2.25, 1.68, 1.32, 1.08, 0.90], reverse: 3.4, final: 4.3, eff: 0.90, shiftUp: 7550, shiftTime: 0.15,
    split: 0, centre: [0, 0], frontDiff: [0, 0], rearDiff: [100, 0.32],
-   brake: 3700, bias: 0.69, hand: 2100, cda: 0.74, cla: 0.22, lock: 0.68, rcLift: 0.30,
+   brake: 3800, bias: 0.76, hand: 2100, cda: 0.74, cla: 0.22, lock: 0.68, rcLift: 0.30, kyF: 1.0, kyR: 0.78,
    colors: {body: "#2e6a4f", stripe: "#f2c641", stripe2: "#f4efe3", rim: "#c9ccd1", glass: "#1a2129"}},
   {id: "pipit", name: "Pipit Sprint 16", kind: "FWD hot hatch", drive: "fwd", eng: "four", plate: "PIPIT 16",
    mass: 1060, inertia: [1450, 1600, 470], a: 0.98, b: 1.42, track: 1.46, hpY: 0.0, lfree: 0.32, travel: 0.23, radius: 0.305, wheelI: 1.0,
@@ -87,7 +87,7 @@ var CARS = [
             curve: [[800, 120], [2000, 175], [3000, 205], [4000, 222], [5000, 232], [6000, 228], [7000, 210], [8000, 185]]},
    gears: [3.25, 2.20, 1.66, 1.32, 1.10, 0.92], reverse: 3.3, final: 4.70, eff: 0.91, shiftUp: 7350, shiftTime: 0.12,
    split: 1, centre: [0, 0], frontDiff: [90, 0.30], rearDiff: [0, 0],
-   brake: 3500, bias: 0.72, hand: 2400, cda: 0.72, cla: 0.18, lock: 0.66, rcLift: 0.28,
+   brake: 3500, bias: 0.80, hand: 2400, cda: 0.72, cla: 0.18, lock: 0.66, rcLift: 0.28, kyF: 1.0, kyR: 0.85,
    colors: {body: "#f0b23a", stripe: "#1f2a44", stripe2: "#e7e2d6", rim: "#2a2f38", glass: "#1b232c"}}
 ];
 
@@ -229,6 +229,7 @@ function step(c, ctl, env, dt){
   ctl = ctl || {};
   var thrIn = clamp(+ctl.throttle || 0, 0, 1), brkIn = clamp(+ctl.brake || 0, 0, 1), hand = clamp(+ctl.handbrake || 0, 0, 1);
   var steerIn = clamp(+ctl.steer || 0, -1, 1), hold = !!ctl.hold;
+  c.sinceHB = hand > 0.3 ? 0 : (c.sinceHB == null ? 9 : c.sinceHB + dt);
   qToM(c.q, M);
   c.t += dt; c.since += dt;
   var right = [M[0], M[3], M[6]], up = [M[1], M[4], M[7]], back = [M[2], M[5], M[8]];
@@ -249,7 +250,17 @@ function step(c, ctl, env, dt){
   var beta = speed > 1.5 ? Math.atan2(vRight, Math.max(0.5, Math.abs(vFwd))) : 0;
   var dBeta = c.betaPrev != null ? (beta - c.betaPrev)/dt : 0;
   c.betaPrev = beta;
-  if(c.assist && c.gear > 0 && Math.abs(beta) > 0.45 && dBeta*beta > 0) thr *= clamp(1 - (Math.abs(beta) - 0.45)/0.45, 0.2, 1);
+  // Stability assist, engine side (an ESC-style intervention, only in a slide that is growing,
+  // never plain traction control): less throttle as the slide angle and its growth rise, and
+  // less again while the driven wheels spin up in that slide.
+  if(c.assist && c.gear > 0 && speed > 4){
+    var grow = dBeta*beta > 0, ab = Math.abs(beta);
+    if(grow && ab > 0.22) thr *= clamp(1 - (ab - 0.22)/0.4 - Math.min(0.4, Math.abs(dBeta)*0.25), 0.15, 1);
+    if(ab > 0.15){
+      var spin = 0; c.wheels.forEach(function(wh){ if(wh.share > 0) spin = Math.max(spin, wh.kappa); });
+      if(spin > 0.45) thr *= clamp(1 - (spin - 0.45)*1.2, 0.3, 1);
+    }
+  }
   // the driven wheels' speed, as the gearbox sees it
   var drivenOm = 0;
   c.wheels.forEach(function(wh){ drivenOm += wh.omega*wh.share; });
@@ -261,9 +272,13 @@ function step(c, ctl, env, dt){
     // (it bounces off the limiter instead, like a sequential box held in gear).
     var gr = gearRatio(c), wr = rpmFromOmega(drivenOm, gr), road = rpmFromOmega(Math.max(0, vFwd)/s.radius, gr);
     var nG = s.gears.length, rpmUp = Math.min(wr, road*1.12);
+    // bouncing off the limiter on wheelspin for a while: short-shift, as a driver would
+    c.limT = wr > s.shiftUp && thr > 0.5 ? (c.limT || 0) + dt : 0;
+    var nextRoad = c.gear < nG ? rpmFromOmega(Math.max(0, vFwd)/s.radius, gearRatio(c, c.gear + 1)) : 0;
+    if(c.limT > 0.35 && nextRoad > 2600) rpmUp = s.shiftUp + 1;
     if(c.gear < nG && rpmUp > s.shiftUp && c.since > 0.3 && thr > 0.05 && c.airT < 0.3){
-      c.pend = c.gear + 1; c.shiftT = s.shiftTime;
-    } else if(c.gear > 1 && c.since > (thr > 0.6 ? 0.9 : 0.4)){
+      c.pend = c.gear + 1; c.shiftT = s.shiftTime; c.upAt = c.t;
+    } else if(c.gear > 1 && c.since > (thr > 0.6 ? 0.9 : 0.4) && (c.t - (c.upAt || -9) > 2 || brk > 0.2 || thr < 0.3)){
       var gl = gearRatio(c, c.gear - 1), lower = rpmFromOmega(Math.max(0, vFwd)/s.radius, gl);
       var down = brk > 0.2 ? 0.6*e.redline : thr > 0.6 ? 0.52*e.redline : 0.34*e.redline;
       down = Math.min(down, 0.86*s.shiftUp*gr/gl);
@@ -275,21 +290,38 @@ function step(c, ctl, env, dt){
   /* --- steering: speed-sensitive lock and rate, keyboard smoothing, assist --- */
   // A stick keeps most of the lock at speed (you need it to catch a slide); a key, which
   // is all or nothing, gets less the faster you go (the assist adds the countersteer).
-  var lock = ctl.analog ? Math.max(0.5, s.lock/(1 + speed/70)) : Math.max(0.26, s.lock/(1 + Math.max(0, speed - 4)/22));
+  // At speed the front tyres reach their grip at only ~5 degrees, so a key (all or nothing) gets
+  // about that much plus a margin; a stick keeps more lock (20 degrees and up) to catch slides.
+  var lock = ctl.analog ? Math.max(0.34, s.lock/(1 + speed/30)) : Math.max(0.08, s.lock/(1 + Math.max(0, speed - 3)/5));
   c.lockNow = lock;
   if(ctl.analog){
     c.steerIn += (steerIn - c.steerIn)*Math.min(1, dt*18);
   } else {
-    var rate = 5.2/(1 + speed/16), back2 = Math.abs(steerIn) < Math.abs(c.steerIn) || steerIn*c.steerIn < 0 ? 1.7 : 1;
+    var rate = 5.2/(1 + speed/9), back2 = Math.abs(steerIn) < Math.abs(c.steerIn) || steerIn*c.steerIn < 0 ? 1.7 : 1;
     var d = steerIn - c.steerIn, mx = rate*back2*dt;
     c.steerIn += clamp(d, -mx, mx);
   }
-  var assist = 0;
-  if(c.assist && vFwd > 3 && c.gear > 0){
-    var fade = clamp((vFwd - 3)/6, 0, 1), bb = Math.abs(beta) < 0.04 ? 0 : beta - sgn(beta)*0.04;
-    assist = clamp(bb*ASSIST_GAIN*fade, -s.lock, s.lock);
+  var assist = 0, on = 0;
+  if(c.assist && vFwd > 3 && c.gear > 0 && c.airT === 0){   // (not in the air: there is nothing to catch)
+    // Once the car is sliding (past ~8 degrees, fully by ~20), point the front wheels along the
+    // front axle's own travel: no front slip, so the fronts stop adding rotation to the slide.
+    var fade = clamp((vFwd - 3)/6, 0, 1);
+    on = clamp((Math.abs(beta) - 0.14)/0.2, 0, 1);
+    // a handbrake turn is on purpose: the assist lets the car rotate, then catches it
+    on *= clamp(((c.sinceHB || 9) - 0.15)/0.6, 0, 1);
+    var wUp = w[0]*up[0] + w[1]*up[1] + w[2]*up[2], betaF = Math.atan2(vRight - wUp*s.a, Math.max(0.5, vFwd));
+    assist = clamp(betaF*on*fade*ASSIST_GAIN, -s.lock, s.lock);
   }
-  c.delta = clamp(c.steerIn*lock + assist, -s.lock, s.lock);
+  // In a slide the assist steers relative to the travel; your keys then ask for that much more
+  // angle into the slide (up to ~20 degrees), which is how a held drift is steered.
+  var assistOn = typeof on === "number" ? on : 0;
+  // ...and with the handbrake up (and just after) a key gets real lock, for a handbrake turn.
+  var kbLock = lerp(lock, Math.max(lock, 0.35), assistOn);
+  if(!ctl.analog && c.sinceHB < 0.6) kbLock = Math.max(kbLock, lerp(0.45, lock, c.sinceHB/0.6));
+  var want = c.steerIn*(ctl.analog ? lock : kbLock);
+  // The assist never doubles your own countersteer: steering the same way it does, you get the
+  // larger of the two; steering into the slide, yours is added (so you can still hold an angle).
+  c.delta = clamp(want*assist > 0 ? (Math.abs(want) > Math.abs(assist) ? want : assist) : want + assist, -s.lock, s.lock);
 
   /* --- engine speed, clutch and the torque the gearbox puts out --- */
   var ratio = gearRatio(c);
@@ -432,6 +464,9 @@ function step(c, ctl, env, dt){
       var Fz = wh.Fz, vx = wh.vx, vy = wh.vy;
       var mu = S.mu*clamp(1 - S.ls*(Fz/3600 - 1), 0.62, 1.15);
       var Dx = mu*Fz, Dy = mu*Fz*0.97;
+      // the rear tyres reach their grip at a smaller slip angle than the fronts (stiffer in
+      // cornering): a car with a stable, slightly understeering balance that you rotate on purpose
+      var kyA = S.ky*(wh.front ? s.kyF : s.kyR);
       var a = Math.abs(vx);
       // relaxation lengths, integrated exactly over the substep
       var sx = 0.16, sy = 0.38;
@@ -443,7 +478,7 @@ function step(c, ctl, env, dt){
       var k0 = wh.kappa*ex - vx*phx/sx, k1 = R*phx/sx;
       function fxAt(om){
         var kap = clamp(k0 + k1*om, -6, 6);
-        var rx = kap/S.kx, ry = tanA/S.ky, rho = Math.sqrt(rx*rx + ry*ry);
+        var rx = kap/S.kx, ry = tanA/kyA, rho = Math.sqrt(rx*rx + ry*ry);
         return Dx*tyreShapeOver(rho, S)*rx;
       }
       var om0 = wh.omega;
@@ -457,7 +492,7 @@ function step(c, ctl, env, dt){
       if(Math.abs(om1) <= fr){ om1 = 0; wh.locked = Tb > 50; } else om1 -= sgn(om1)*fr;
       var kap = clamp(k0 + k1*om1, -6, 6);
       wh.omega = om1; wh.kappa = kap; wh.tanA = tanA;
-      var rx2 = kap/S.kx, ry2 = tanA/S.ky, rho2 = Math.sqrt(rx2*rx2 + ry2*ry2), so = tyreShapeOver(rho2, S);
+      var rx2 = kap/S.kx, ry2 = tanA/kyA, rho2 = Math.sqrt(rx2*rx2 + ry2*ry2), so = tyreShapeOver(rho2, S);
       var Fx = Dx*so*rx2, Fy = -Dy*so*ry2;
       // low-speed damper: the tyre's carcass at a crawl (fades out by 3 m/s)
       // (by the contact patch's whole speed: a car sliding sideways is not crawling)
@@ -507,8 +542,8 @@ function step(c, ctl, env, dt){
   if(env && env.obstacles) obstacles(c, env, Ftot, Ttot, right, back);
   // Stability assist (keyboard default): past ~30 degrees of slide, resist the slide
   // *growing* (a held drift, whose angle is steady, is left alone).
-  if(c.assist && vFwd > 4 && hand < 0.3 && dBeta*beta > 0 && Math.abs(beta) > 0.5){
-    var yk = s.inertia[1]*clamp((Math.abs(beta) - 0.5)/0.35, 0, 1)*Math.min(Math.abs(dBeta), 3)*2.2;
+  if(c.assist && vFwd > 4 && hand < 0.3 && dBeta*beta > 0 && Math.abs(beta) > 0.35){
+    var yk = s.inertia[1]*clamp((Math.abs(beta) - 0.35)/0.35, 0, 1)*Math.min(Math.abs(dBeta), 3)*2.2;
     var ty = -sgn(beta)*yk;
     Ttot[0] += up[0]*ty; Ttot[1] += up[1]*ty; Ttot[2] += up[2]*ty;
   }
@@ -553,7 +588,7 @@ function step(c, ctl, env, dt){
   T.beta = T.speed > 2 ? Math.atan2(vR2, Math.abs(vF2)) : 0;
   T.drift = T.speed > 8 && Math.abs(T.beta) > 0.24 && grounded >= 2;
   var sl = 0; for(i = 0; i < 4; i++) sl = Math.max(sl, c.wheels[i].slip);
-  T.slip = sl; T.rumble = grounded ? rumble/grounded : 0; T.surface = bi; T.air = grounded === 0;
+  T.slip = sl; T.rumble = grounded ? rumble/grounded : 0; if(grounded) T.surface = bi; T.air = grounded === 0;
   T.throttle = thr; T.brake = brk; T.steer = c.steerIn; T.hand = hand > 0.3; T.boost = c.boost; T.grounded = grounded;
   T.heading = headingOf(M);
 }
@@ -581,7 +616,8 @@ function hull(c, env, F, T, right, up, back){
     pen *= HN[1];
     var vx = v[0] + w[1]*rz - w[2]*ry, vy = v[1] + w[2]*rx - w[0]*rz, vz = v[2] + w[0]*ry - w[1]*rx;
     var vn = vx*HN[0] + vy*HN[1] + vz*HN[2];
-    var N = 140000*Math.min(pen, 0.4) - 9000*vn;
+    // a stiff, damped contact, capped per point: a bank at speed stops the car, never launches it
+    var N = Math.min(70000, 140000*Math.min(pen, 0.4) - 9000*Math.max(vn, -6));
     if(N <= 0) continue;
     if(vn < -3) { c.hit = Math.max(c.hit, Math.min(1, -vn/10)); c.hitT = 0.3; }
     var tx = vx - HN[0]*vn, ty = vy - HN[1]*vn, tz = vz - HN[2]*vn, tl = Math.sqrt(tx*tx + ty*ty + tz*tz);
@@ -602,7 +638,7 @@ function obstacles(c, env, F, T){
       var nx = dx/d, nz = dz/d, pen = orr - d;
       var vx = v[0] + w[1]*rz - w[2]*ry, vz = v[2] + w[0]*ry - w[1]*rx;
       var vn = vx*nx + vz*nz;
-      var N = 160000*Math.min(pen, 0.5) - 12000*Math.min(vn, 0);
+      var N = Math.min(110000, 160000*Math.min(pen, 0.5) - 12000*Math.max(Math.min(vn, 0), -8));
       if(N <= 0) continue;
       if(vn < -3){ c.hit = Math.max(c.hit, Math.min(1, -vn/12)); c.hitT = 0.3; }
       var tx = vx - nx*vn, tz = vz - nz*vn, tl = Math.sqrt(tx*tx + tz*tz), fr = tl > 1e-3 ? 0.4*N*Math.min(1, tl/0.5)/tl : 0;

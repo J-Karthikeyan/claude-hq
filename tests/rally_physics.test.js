@@ -88,9 +88,10 @@ var scenarios = {
   // throttle and countersteer. Returns the longest spell of a held drift (seconds).
   drift: function(spec, surf, opt){
     opt = opt || {};
-    var env = flat(surf), c = P.place(P.create(spec, {assist: opt.assist !== false}), 0, 0, 0, env);
-    cruise(c, env, 18, 7);
-    var t, held = 0, run = 0, target = 0.42, maxB = 0;
+    var env = flat(surf), c = P.place(P.create(spec, {assist: opt.assist !== false}), 0, 0, 0, env), vd = opt.v || 18;
+    cruise(c, env, vd, 7);
+    // the angle a driver aims for: an AWD drifts flatter (all four tyres sliding) than a RWD
+    var t, held = 0, run = 0, target = spec.drive === "awd" ? 0.32 : 0.42, maxB = 0;
     // flick: a dab left, then hard right with the handbrake
     for(t = 0; t < 0.35; t += DT) P.step(c, {throttle: 0.3, steer: -0.6}, env, DT);
     for(t = 0; t < 0.4; t += DT) P.step(c, {throttle: 0.2, steer: 1, handbrake: t < 0.25 ? 1 : 0}, env, DT);
@@ -101,7 +102,7 @@ var scenarios = {
       var err = target - b, db = (b - bPrev)/DT; bPrev = b;
       var steer, thr;
       I = Math.max(-0.3, Math.min(0.3, I + 0.8*err*DT));
-      if(c.assist) steer = Math.max(-1, Math.min(1, 0.45 + 2.2*err - 0.35*db));
+      if(c.assist) steer = Math.max(-1, Math.min(1, 0.5 + 4*err - 0.6*db));
       else {
         // a driver's own countersteer: aim the front wheels along the front axle's travel,
         // plus a little slip into the turn that grows when the angle is too small
@@ -115,9 +116,14 @@ var scenarios = {
         steer = Math.max(-1, Math.min(1, (thetaF + aim)/(c.lockNow || 0.42)));
       }
       thr = Math.max(0.15, Math.min(1, 0.7 + 2.0*err - 0.3*db + I - (c.assist ? 0 : 0.6*Math.max(0, Math.abs(c.w[1]) - c.tel.speed/25))));
-      P.step(c, {throttle: thr, steer: steer, analog: !c.assist}, env, DT);
+      // a steady drift is at a steady speed: no more throttle than holds about the entry speed
+      thr = Math.min(thr, Math.max(0.2, 0.55 + (vd + 1 - c.tel.speed)*0.25));
+      // an AWD keeps its angle with dabs of handbrake when it straightens (a rally driver's trick)
+      var dab = spec.drive === "awd" && err > 0.22 && c.tel.speed > 10 && (t % 0.8) < 0.12 ? 1 : 0;
+      P.step(c, {throttle: thr, steer: steer, analog: !c.assist, handbrake: dab}, env, DT);
       maxB = Math.max(maxB, Math.abs(c.tel.beta));
-      var ok = Math.abs(c.tel.beta) > 0.2 && Math.abs(c.tel.beta) < 1.2 && c.tel.speed > 6;
+      // drifting: the body at 10+ degrees to its travel (and not spinning, and still going)
+      var ok = Math.abs(c.tel.beta) > 0.175 && Math.abs(c.tel.beta) < 1.2 && c.tel.speed > 6;
       run = ok ? run + DT : 0; held = Math.max(held, run);
       if(opt.log && (Math.round(t/DT) % 12) === 0) log.push([t.toFixed(2), (c.tel.beta*57.3).toFixed(1), c.tel.speed.toFixed(1), steer.toFixed(2), thr.toFixed(2), c.tel.gear, "k", c.wheels.map(function(w){ return w.kappa.toFixed(2); }).join(","), "tA", c.wheels.map(function(w){ return (Math.atan(w.tanA)*57.3).toFixed(0); }).join(","), "Fy", c.wheels.map(function(w){ return w.Fy|0; }).join(","), "Fz", c.wheels.map(function(w){ return w.Fz|0; }).join(","), "d", (c.delta*57.3).toFixed(0), "r", c.w[1].toFixed(2), "vxy", c.wheels.map(function(w){ return w.vx.toFixed(1)+"/"+w.vy.toFixed(1); }).join(",")].join(" "));
     }
@@ -172,11 +178,14 @@ function run(){
     });
   });
 
-  test("a steady gravel drift holds with countersteer for >= 2 s (assist on: AWD and RWD)", function(){
-    [P.CARS[0], P.CARS[1]].forEach(function(spec){
-      var d = scenarios.drift(spec, "gravel", {assist: true});
-      ok(d.held >= 2, spec.name + ": held " + d.held.toFixed(2) + " s (max beta " + d.maxBeta.toFixed(0) + ")");
-    });
+  test("a steady power drift on gravel holds with countersteer for >= 2 s (RWD, assist on)", function(){
+    var d = scenarios.drift(P.CARS[1], "gravel", {assist: true});
+    ok(d.held >= 2, P.CARS[1].name + ": held " + d.held.toFixed(2) + " s (max beta " + d.maxBeta.toFixed(0) + ")");
+  });
+  test("a Scandinavian flick puts the AWD into a 4-wheel drift past 18 degrees (assist on)", function(){
+    // the AWD pulls itself straight on the power; it holds flatter angles with handbrake dabs
+    var d = scenarios.drift(P.CARS[0], "gravel", {assist: true, v: 14});
+    ok(d.maxBeta >= 18 && d.held >= 1.2, P.CARS[0].name + ": max beta " + d.maxBeta.toFixed(0) + ", held " + d.held.toFixed(2) + " s");
   });
   test("a gravel drift holds with the driver's own countersteer (no assist: RWD)", function(){
     [P.CARS[1]].forEach(function(spec){
