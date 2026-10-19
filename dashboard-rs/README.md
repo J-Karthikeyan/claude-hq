@@ -3,12 +3,14 @@
 A Rust port of the local Claude HQ server: `dashboard.py` and everything it
 imports (`arena.py`, `music.py`, `worksignals.py`, `ext_skills.py`,
 `ext_loot.py`, `ext_prestige.py`, `ext_maps.py`, `ext_cups.py`,
-`ext_boss.py`, `ext_notch.py`), including the evolution picks
-(`POST /api/evo-choice`, `evo-choices.json`, `creature.evo` in
-`/api/sessions`). Same routes, same gates, same JSON, same state files, same
-Arena privacy boundary. The frontend (`index.html`, `ui/`, `games/`) is
-unchanged and served from the repo as before. Not ported yet: see
-[Known gaps](#known-gaps-and-differences).
+`ext_boss.py`, `ext_skate.py`, `ext_notch.py`), at parity with
+`dashboard.py` **2.6.2**: including the evolution picks (`POST /api/evo-choice`,
+`evo-choices.json`, `creature.evo` in `/api/sessions`), the Overflow Vial
+(`vial.json`, `payload.vial`, `vialPoured`, `POST /api/vial/spend`), archived
+cards for prompt-less transcripts and error alerts that clear on a later good
+reply. Same routes, same gates, same JSON, same state files, same Arena privacy
+boundary. The frontend (`index.html`, `ui/`, `games/`) is unchanged and served
+from the repo as before.
 
 It runs **alongside** the Python server, the same way `backend-rs/` did for the
 Arena: the Python files are untouched, both read and write the same state
@@ -42,7 +44,7 @@ dashboard-rs/target/release/claudehq --install
 
 ```bash
 cd dashboard-rs
-~/.cargo/bin/cargo test                                  # 146 tests
+~/.cargo/bin/cargo test                                  # 166 tests
 ~/.cargo/bin/cargo clippy --all-targets -- -D warnings   # clean
 ```
 
@@ -51,12 +53,14 @@ validation, atomic state and quarantine, the meal ledger, the fatigue contract
 vectors, needs-you detection, slim cards, the payload memo, flexible streaks,
 Cursor transcripts and titles, work-signal classification, music parsing and
 the share loop, the Arena wire allowlists (pantry, cali, rooms, portrait,
-gifts, nudges), every ext proxy (skills, loot, prestige, maps, cups, boss),
-the pantry eat flow, close/resume guards, evolution picks (`test_evo_choice.py`),
+gifts, nudges), every ext proxy (skills, loot, prestige, maps, cups, boss,
+skate), the Overflow Vial ledger (`test_vial.py`), error recovery
+(`test_scanner.py` RecoveryTests), the pantry eat flow, close/resume guards,
+evolution picks (`test_evo_choice.py`),
 HQ Notch status and install (`test_notch_invite.py`, with a stand-in installer)
 and the self-update, including the rebuild (on throwaway git repos with a fake
 `cargo`). `tests/http.rs` checks the gates on a real 127.0.0.1 server (also for
-`/api/evo-choice` and `/api/notch/install`), and `tests/scanner.rs` the
+`/api/evo-choice`, `/api/vial/spend` and `/api/notch/install`), and `tests/scanner.rs` the
 transcript pass, busy spans and work signals.
 
 ## Parity
@@ -65,11 +69,13 @@ transcript pass, busy spans and work signals.
 ports (never 8765) against **one** temp copy of the Claude HQ folder: code
 symlinked, state files copied, no `arena-link.json`, the Arena URL blanked and
 work signals off, so nothing can pair or leave the machine. It GETs every
-route on both (110 GET/HEAD checks, including `/api/notch/status` and
-`/api/sessions` again after seeding an evo pick for every session that has a
-choice), diffs status, headers and normalized JSON, then replays 59 safe POSTs
-on each (9 of them `/api/evo-choice`; resetting the temp state between
-servers), diffs the state files they leave, and runs 11 checks on the POST
+route on both (111 GET/HEAD checks, including `/api/notch/status`,
+`/api/arena/skate` and `/api/sessions` again after seeding an evo pick for
+every session that has a choice), diffs status, headers and normalized JSON,
+then replays 73 safe POSTs on each (9 `/api/evo-choice`, 8 `/api/vial/spend`
+against a seeded two-drop vial, 6 `/api/arena/skate/combo`; resetting the temp
+state between servers), diffs the state files they leave (a spend's own clock
+stamp in `vial.json` aside), and runs 11 checks on the POST
 gates (CSRF, Origin, Host, body caps, bad bodies; `/api/notch/install` only
 without a token or from a foreign Origin, so the real installer never runs).
 
@@ -93,12 +99,13 @@ clock-driven value (fatigue, sparks, ages) included. The one remaining diff is
 the first known gap below. In a live run, the only extra differences come from
 sessions being written between the two servers' reads.
 
-**2026-10-19 (frozen, against `dashboard.py` 2.6.1):** 180 checks, 174
-identical. Every notch and evo check matches (status, 9 evo POSTs with their
-`evo-choices.json` bytes, `creature.evo` on all 105 shared cards). The 6
-differences are the bad `Content-Length` gap and five views of the
-not-yet-ported Python 2.5.2 payload changes listed under Known gaps
-(`/api/sessions` twice, the stream frame, `export.json`, `export.csv`).
+**2026-10-19 (frozen, against `dashboard.py` 2.6.2, 153 sessions):** 195
+checks, **194 identical**; 162 of 170 JSON bodies byte-identical, the rest
+differing only in per-process values. `/api/sessions` (all 153 cards, the vial,
+`vialPoured`, `creature.evo` on every card) matches; with clock-driven keys
+kept, the only differences are the vial drops' `ttl` (seconds until each
+drop dies, read off each server's own clock). The one remaining diff is the
+bad `Content-Length` gap below.
 
 Rough numbers on the same frozen data (M-series Mac, release build):
 
@@ -116,15 +123,13 @@ Rough numbers on the same frozen data (M-series Mac, release build):
 - **Status 0 from the Arena** on POST routes that pass the code through
   (publish, ticket, nudge, quickplay, crews, cosmetics, market, portrait, HQ):
   Python writes a literal `HTTP/1.0 0` status line; Rust sends `502`.
-- `/api/server-stats`: `"python"` reads `n/a (Rust 2.5.0)`, there is an extra
+- `/api/server-stats`: `"python"` reads `n/a (Rust 2.6.2)`, there is an extra
   `"impl": "rust"`, and `threads` is the OS thread count (`ps -M`).
-- HTTP/1.1 with keep-alive instead of Python's HTTP/1.0; `Server: ClaudeHQ/2.5.0 Rust`.
-- **Not ported yet** (Python changes after the port): the Overflow Vial
-  (`vial.json`, `payload.vial`, each card's `vialPoured`, `POST /api/vial/spend`),
-  the other 2.5.2 payload changes (archived cards with no prompts are listed,
-  an error clears once a later reply succeeds), `ext_skate.py`
-  (`GET /api/arena/skate`, `POST /api/arena/skate/combo`), and `APP_VERSION`
-  is still 2.5.0. Those routes 404 here.
+- HTTP/1.1 with keep-alive instead of Python's HTTP/1.0; `Server: ClaudeHQ/2.6.2 Rust`.
+- `vial.json` corner cases: a `NaN` / `Infinity` literal in a hand-edited
+  ledger is dropped like any other bad entry; a `seenPrompts` of `Infinity` or a
+  non-numeric `stage` string makes Python's read raise (and the payload build
+  fail) where Rust reads 0.
 - `POST /api/update` "stale" compares the running **binary's** mtime (Python
   watches `dashboard.py`), and is also true when this checkout's Rust sources
   (`Cargo.toml`, `Cargo.lock`, `src/`, `assets/`) are newer than the binary it
@@ -172,6 +177,7 @@ Rough numbers on the same frozen data (M-series Mac, release build):
 | `src/arena.rs`, `src/ext.rs`, `src/music.rs`, `src/worksignals.rs` | `arena.py`, `ext_*.py`, `music.py`, `worksignals.py` |
 | `src/notch.rs` | `ext_notch.py`: HQ Notch status + one-click install |
 | `src/evo.rs` | evolution picks: `evo_tables`, `clean_evo_choice`, `load` / `save_evo_choice`, `merge_evo_choices` |
+| `src/vial.rs` | the Overflow Vial: `_vial_read` / `_vial_write`, tick, grant, drip, cap, spend, sources, `payload.vial` |
 | `src/server.rs` | `Handler`: routes, gates, static files, `assemble_index`, SSE |
 | `src/actions.rs` | resume / reveal / close, self-update, launchd, notifications |
 | `src/py.rs`, `src/pyjson.rs`, `src/difflib.rs`, `src/state.rs` | Python semantics the port relies on (str methods, `round`, `isoformat`, `json.dumps` byte format, `SequenceMatcher`, atomic writes) |

@@ -326,6 +326,9 @@ pub struct Agg {
     pub per_day: IndexMap<String, Day>,
     pub activity_ts: Vec<f64>,
     pub errors: Vec<(f64, String)>,
+    /// Epoch of the newest assistant record that is not itself an API-error
+    /// reply: an error alert clears once a good reply landed after it.
+    pub last_good_reply: Option<f64>,
     pub timeline: Vec<TimelineEv>,
     pub files: IndexMap<String, FileTouch>,
     pub model: String,
@@ -595,8 +598,12 @@ pub fn scan_claude(path: &Path) -> Agg {
                     if !model.is_empty() {
                         cx.agg.model = model.clone();
                     }
-                    if let (Some(sig), Some(t)) = (record_error_sig(&rec), t) {
-                        cx.agg.errors.push((t, sig));
+                    match (record_error_sig(&rec).filter(|s| !s.is_empty()), t) {
+                        (Some(sig), Some(t)) => cx.agg.errors.push((t, sig)),
+                        // a real reply (this record isn't the synthetic error message
+                        // itself): the session recovered, so its error alert may clear
+                        (None, Some(t)) => cx.agg.last_good_reply = Some(t),
+                        _ => {}
                     }
                     if let Some(diso) = &diso {
                         cx.agg.per_day.entry(diso.clone()).or_insert_with(new_day);

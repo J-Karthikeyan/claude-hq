@@ -109,6 +109,37 @@ fn error_signatures() {
     assert_eq!(sigs(&scan(&[json!({"type": "system", "subtype": "api_error", "timestamp": TS, "error": {"message": "socket hang up"}})])), vec!["api_error"]);
 }
 
+/// test_scanner.py RecoveryTests: an error alert clears on a good reply after it.
+#[test]
+fn recovery_from_errors() {
+    const LATER: &str = "2026-09-01T10:05:00.000Z";
+    let api_err = |mid: &str, ts: &str| {
+        let mut r = asst(json!([text("API Error: Overloaded")]), Some(mid), None, ts);
+        r["isApiErrorMessage"] = json!(true);
+        r
+    };
+    let recent = |a: &scan::Agg, now: f64| claudehq::payload::recent_unrecovered_error(&a.errors, a.last_good_reply, now).is_some();
+    // a good reply sets last_good_reply
+    let agg = scan(&[asst(json!([text("hello")]), Some("m1"), None, TS)]);
+    assert_eq!(agg.last_good_reply, Some(Utc.with_ymd_and_hms(2026, 9, 1, 10, 0, 0).unwrap().timestamp() as f64));
+    // the error record itself does not recover it
+    assert_eq!(scan(&[api_err("m1", TS)]).last_good_reply, None);
+    // an error after the last reply stays flagged
+    let agg = scan(&[asst(json!([text("working on it")]), Some("m1"), None, TS), api_err("m2", LATER)]);
+    assert_eq!(agg.errors.len(), 1);
+    assert!(recent(&agg, agg.errors[0].0 + 60.0));
+    // a good reply after the error marks recovery
+    let agg = scan(&[api_err("m1", TS), asst(json!([text("sorry, here is the answer")]), Some("m2"), None, LATER)]);
+    assert_eq!(agg.errors.len(), 1);
+    assert!(!recent(&agg, agg.errors[0].0 + 60.0));
+    // recovery does not reach back in time
+    let agg = scan(&[asst(json!([text("earlier good turn")]), Some("m0"), None, TS), api_err("m1", LATER)]);
+    assert!(recent(&agg, agg.errors[0].0 + 60.0));
+    // the six-hour window still expires an unanswered error
+    let agg = scan(&[api_err("m1", TS)]);
+    assert!(!recent(&agg, agg.errors[0].0 + 6.0 * 3600.0 + 1.0));
+}
+
 #[test]
 fn interrupts_are_not_prompts() {
     let agg = scan(&[

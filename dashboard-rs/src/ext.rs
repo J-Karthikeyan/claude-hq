@@ -20,7 +20,7 @@ pub type Resp = (u16, Value);
 pub type GetFn = fn(&App, &dyn Fn(&str) -> String) -> Resp;
 pub type PostFn = fn(&App, &Value) -> Resp;
 
-/// GET routes in dashboard.py's EXT order (skills, loot, prestige, maps, cups, boss, notch).
+/// GET routes in dashboard.py's EXT order (skills, loot, prestige, maps, cups, boss, skate, notch).
 pub const GET: &[(&str, GetFn)] = &[
     ("/api/arena/skills", get_skills),
     ("/api/skills/local", get_local),
@@ -36,6 +36,7 @@ pub const GET: &[(&str, GetFn)] = &[
     ("/api/arena/cups/trophies", cup_trophies),
     ("/api/arena/boss", boss_state),
     ("/api/arena/boss/badges", boss_badges),
+    ("/api/arena/skate", skate_board),
     ("/api/notch/status", crate::notch::get_status),
 ];
 
@@ -49,6 +50,7 @@ pub const POST: &[(&str, PostFn)] = &[
     ("/api/arena/maps/delete", delete_map),
     ("/api/arena/maps/hide", hide_map),
     ("/api/arena/boss/fight", boss_fight),
+    ("/api/arena/skate/combo", skate_combo),
 ];
 
 pub type DayCountsFn = Arc<dyn Fn(i64) -> IndexMap<String, IndexMap<String, i64>> + Send + Sync>;
@@ -833,6 +835,44 @@ fn boss_fight(app: &App, body: &Value) -> Resp {
     app.arena_request("POST", &format!("{}/v1/boss/fight", b), Some(&t), Some(&json!({"requestId": rid, "team": team})))
 }
 
+// ---------------------------------------------------------------------------
+// skate (ext_skate.py): the Arena City skatepark's weekly board. The only
+// thing that leaves the machine is a combo's score: two whole numbers.
+// ---------------------------------------------------------------------------
+
+pub const SKATE_MAX_TOTAL: i64 = 200000;
+pub const SKATE_MAX_TRICKS: i64 = 10;
+
+/// _whole(v, lo, hi): an int, or an integral float, inside [lo, hi]; never a bool.
+pub fn whole(v: Option<&Value>, lo: i64, hi: i64) -> Option<i64> {
+    let Some(Value::Number(n)) = v else { return None };
+    let x = if let Some(i) = n.as_i64() {
+        i as f64
+    } else {
+        let f = n.as_f64()?;
+        if f.is_nan() || f.fract() != 0.0 {
+            return None;
+        }
+        f
+    };
+    (lo as f64 <= x && x <= hi as f64).then_some(x as i64)
+}
+
+fn skate_board(app: &App, _arg: &dyn Fn(&str) -> String) -> Resp {
+    let Some((t, b)) = app.authed() else { return not_paired() };
+    app.arena_request("GET", &format!("{}/v1/skate", b), Some(&t), None)
+}
+
+fn skate_combo(app: &App, body: &Value) -> Resp {
+    let total = whole(body.get("total"), 1, SKATE_MAX_TOTAL);
+    let tricks = whole(body.get("tricks"), 1, SKATE_MAX_TRICKS);
+    let (Some(total), Some(tricks)) = (total, tricks) else {
+        return bad("a combo is a total (1-200000) and a trick count (1-10)");
+    };
+    let Some((t, b)) = app.authed() else { return not_paired() };
+    app.arena_request("POST", &format!("{}/v1/skate", b), Some(&t), Some(&json!({"total": total, "tricks": tricks})))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1129,5 +1169,28 @@ mod tests {
             assert_eq!(boss_badges(&app, &arg(&[("u", b)])).0, 400);
         }
         assert_eq!(sent.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn skate_sends_two_whole_numbers_only() {
+        let (_d, app) = app();
+        assert_eq!(skate_board(&app, &arg(&[])), (400, json!({"error": "not paired"})));
+        assert_eq!(skate_combo(&app, &json!({"total": 800, "tricks": 2})), (400, json!({"error": "not paired"})));
+        let sent = stub(&app, "https://arena.example", Arc::new(Mutex::new((200, json!({"ok": true})))));
+        assert_eq!(skate_board(&app, &arg(&[])).0, 200);
+        assert_eq!(skate_combo(&app, &json!({"total": 800.0, "tricks": 2, "where": "/secret", "sessionId": UID})).0, 200);
+        assert_eq!(skate_combo(&app, &json!({"total": SKATE_MAX_TOTAL, "tricks": SKATE_MAX_TRICKS})).0, 200);
+        let err = json!({"error": "a combo is a total (1-200000) and a trick count (1-10)"});
+        for b in [json!({}), json!(null), json!({"total": 0, "tricks": 1}), json!({"total": 200001, "tricks": 1}), json!({"total": 5, "tricks": 11}),
+                  json!({"total": 5.5, "tricks": 1}), json!({"total": true, "tricks": 1}), json!({"total": "5", "tricks": 1}), json!({"total": 5, "tricks": 0})] {
+            assert_eq!(skate_combo(&app, &b), (400, err.clone()), "{}", b);
+        }
+        let s = sent.lock().unwrap();
+        assert_eq!(s.len(), 3);
+        assert_eq!((s[0].0.as_str(), s[0].1.as_str(), s[0].3.clone()), ("GET", "https://arena.example/v1/skate", None));
+        assert_eq!((s[1].0.as_str(), s[1].1.as_str()), ("POST", "https://arena.example/v1/skate"));
+        assert_eq!(s[1].3, Some(json!({"total": 800, "tricks": 2})));
+        assert!(GET.iter().any(|(p, _)| *p == "/api/arena/skate"));
+        assert!(POST.iter().any(|(p, _)| *p == "/api/arena/skate/combo"));
     }
 }

@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
-pub const APP_VERSION: &str = "2.5.0";
+pub const APP_VERSION: &str = "2.6.2";
 
 pub static UUID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-fA-F-]{36}$").unwrap());
 pub static RID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9_-]{16,64}$").unwrap());
@@ -57,6 +57,7 @@ pub struct Paths {
     pub arena_link: PathBuf,
     pub loot_state: PathBuf,
     pub evo: PathBuf,
+    pub vial: PathBuf,
     pub notch_installer: PathBuf,
     pub notch_app: PathBuf,
 }
@@ -83,6 +84,7 @@ impl Paths {
             arena_link: here.join("arena-link.json"),
             loot_state: here.join("loot-state.json"),
             evo: here.join("evo-choices.json"),
+            vial: here.join("vial.json"),
             notch_installer: here.join("notch").join("tools").join("install.py"),
             notch_app: home.join("Applications").join("HQ Notch.app"),
         }
@@ -127,6 +129,7 @@ pub struct App {
     pub(crate) meals_lock: Mutex<HashSet<String>>,
     pub(crate) games_lock: Mutex<()>,
     pub(crate) evo_lock: Mutex<()>,
+    pub(crate) vial_lock: Mutex<()>,
     pub(crate) evo_tables: std::sync::OnceLock<crate::evo::EvoTables>,
     pub(crate) dex_salt: Mutex<Option<String>>,
     pub(crate) update_cache: Mutex<(f64, Option<Value>)>,
@@ -164,6 +167,7 @@ impl App {
             meals_lock: Mutex::new(HashSet::new()),
             games_lock: Mutex::new(()),
             evo_lock: Mutex::new(()),
+            vial_lock: Mutex::new(()),
             evo_tables: std::sync::OnceLock::new(),
             dex_salt: Mutex::new(None),
             update_cache: Mutex::new((0.0, None)),

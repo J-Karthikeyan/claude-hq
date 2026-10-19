@@ -54,7 +54,7 @@ pub fn post_paths() -> Vec<&'static str> {
         "/api/arena/pantry/give", "/api/arena/pantry/reward", "/api/arena/hq/me", "/api/arena/portrait", "/api/arena/cosmetics/buy",
         "/api/arena/cosmetics/equip", "/api/arena/market/sell", "/api/arena/crews/create", "/api/arena/crews/join",
         "/api/arena/crews/leave", "/api/arena/quickplay/join", "/api/arena/quickplay/leave", "/api/arena/cali/order",
-        "/api/arena/sounds", "/api/games/state", "/api/notch/install",
+        "/api/arena/sounds", "/api/games/state", "/api/vial/spend", "/api/notch/install",
     ];
     v.extend(ARENA_ROOM_POSTS);
     v.extend(ext::POST.iter().map(|(p, _)| *p));
@@ -294,7 +294,7 @@ impl App {
 
 static GAME_FILE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9_-]{0,40}\.(js|css)$").unwrap());
 static GAME_ASSET_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(vendor/[a-z][a-z0-9-]{0,40}\.js|(golf|kart|platformer|fps)/[a-z][a-z0-9-]{0,40}\.(glb|json|png))$").unwrap()
+    Regex::new(r"^(vendor/[a-z][a-z0-9-]{0,40}\.js|(golf|kart|platformer|fps|strike)/[a-z][a-z0-9-]{0,40}\.(glb|json|png))$").unwrap()
 });
 
 fn game_type(ext: &str) -> &'static str {
@@ -787,6 +787,17 @@ fn post_route(app: &Arc<App>, path: &str, body: &Value) -> Reply {
             // HQ Notch from HQ (ext_notch.py): the same install as `python3 notch/tools/install.py`
             let (c, r) = app.notch_install();
             Reply::json(c, &r)
+        }
+        "/api/vial/spend" => {
+            let sid = b.get("sessionId").unwrap_or(&Value::Null);
+            let stg = b.get("fromStage").unwrap_or(&Value::Null);
+            if !matches!(sid, Value::String(s) if is_uuid(s)) {
+                return Reply::json(400, &json!({"error": "invalid sessionId"}));
+            }
+            if !matches!(py::strict_int(stg), Some(0..=3)) {
+                return Reply::json(400, &json!({"error": "invalid fromStage"}));
+            }
+            Reply::json(200, &app.vial_spend(sid, stg, py::now_ts()))
         }
         "/api/evo-choice" => match app.save_evo_choice(b.get("sessionId"), b) {
             Ok(entry) => {
