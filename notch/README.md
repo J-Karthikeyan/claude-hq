@@ -40,8 +40,8 @@ pick the hooks up once they reload their settings.
 Claude HQ (`python3 dashboard.py`) is optional. When it is running, the notch reads
 `/api/sessions` on `127.0.0.1` for each session's creature, title and prompt count, and lists
 live sessions that started before the notch. Without HQ, the notch computes the same
-species/stage/shiny itself (it reads HQ's `.dex-seed` for the shiny roll when it can find
-it).
+species/stage/shiny itself (shinies from HQ's Pokédex, remembered while HQ is closed; the notch never reads HQ's files,
+so it never needs macOS's Documents-folder permission).
 
 ## How it works
 

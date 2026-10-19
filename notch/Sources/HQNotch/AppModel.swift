@@ -104,7 +104,8 @@ final class AppModel: ObservableObject {
     @Published var showDiff: (item: TickerItem, folder: String)?
 
     let server = HookServer()
-    private var salt: String?
+    /// Which species are shiny (HQ's Pokédex), remembered for while HQ is closed.
+    private var shinySpecies = Set((UserDefaults.standard.array(forKey: "hqnotch.shinySpecies") as? [Int]) ?? [])
     private var pollTask: Task<Void, Never>?
     private var tickTimer: Timer?
     /// Sessions whose question was just handed to the terminal from the `--ask` hook. If
@@ -115,7 +116,6 @@ final class AppModel: ObservableObject {
     @Published private(set) var attention = 0
 
     init() {
-        salt = Self.readSalt()
         server.onMessage = { [weak self] m, id in self?.receive(m, id) }
         server.onGone = { [weak self] id in self?.store.resolvePending(id: id) }
         do { try server.start() } catch { NSLog("HQNotch: socket failed: \(error)") }
@@ -136,7 +136,15 @@ final class AppModel: ObservableObject {
     }
 
     func creature(_ s: Session) -> Creature {
-        (s.creature ?? Creature.local(sessionId: s.id, prompts: s.promptCount, salt: salt)).floored(stageFloor)
+        (s.creature ?? local(s)).floored(stageFloor)
+    }
+
+    /// HQ is not running (or has not listed this session yet): the same species and stage as
+    /// HQ's, and shiny when HQ's Pokédex last said that species is.
+    private func local(_ s: Session) -> Creature {
+        var c = Creature.local(sessionId: s.id, prompts: s.promptCount, salt: nil)
+        c.shiny = shinySpecies.contains(c.species)
+        return c
     }
 
     /// Species -> highest stage reached (HQ's Pokédex). Kept in UserDefaults so the floor
@@ -167,6 +175,11 @@ final class AppModel: ObservableObject {
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200 else { return }
         floorFetchedAt = Date()
+        let shiny = Creature.parseShiny(data)
+        if !shiny.isEmpty, shiny != shinySpecies {
+            shinySpecies = shiny
+            UserDefaults.standard.set(Array(shiny).sorted(), forKey: "hqnotch.shinySpecies")
+        }
         let fresh = Creature.parseFloor(data)
         guard !fresh.isEmpty else { return }
         // Never lower a floor (HQ's browser floor is monotonic too).
@@ -336,21 +349,5 @@ final class AppModel: ObservableObject {
         store.mergeHQ(HQSession.parse(data))
         await pollFloor(base)
         await pollConfig(base)
-    }
-
-    /// HQ's per-install shiny salt (`.dex-seed` next to dashboard.py), so local fallback
-    /// shinies match HQ. Optional: without it the fallback is never shiny.
-    static func readSalt() -> String? {
-        let candidates = [
-            ProcessInfo.processInfo.environment["HQ_DIR"],
-            UserDefaults.standard.string(forKey: "hqnotch.hqDir"),
-            ("~/Documents/Claude/claude-dashboard" as NSString).expandingTildeInPath,
-        ].compactMap { $0 }
-        for d in candidates {
-            if let s = try? String(contentsOfFile: d + "/.dex-seed", encoding: .utf8)
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-               s.range(of: "^[0-9a-f]{8,64}$", options: .regularExpression) != nil { return s }
-        }
-        return nil
     }
 }

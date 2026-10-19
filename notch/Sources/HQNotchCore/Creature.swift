@@ -48,6 +48,16 @@ public struct Creature: Equatable, Sendable {
         return out
     }
 
+    /// The shiny species from HQ's `/api/pokedex` (`shiny: true`), so a creature computed here
+    /// while HQ is closed is shiny exactly when HQ's is. HQ's salt stays HQ's: the notch never
+    /// reads HQ's files (they live in ~/Documents, which would need a macOS permission prompt).
+    public static func parseShiny(_ data: Data) -> Set<Int> {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let list = root["species"] as? [[String: Any]] else { return [] }
+        return Set(list.compactMap { o in
+            (o["shiny"] as? Bool) == true ? (o["species"] as? Int).map { (($0 % 48) + 48) % 48 } : nil })
+    }
+
     /// HQ's evolution thresholds on promptCount (dashboard.py STAGE_THRESHOLDS).
     public static let stageThresholds = [0, 3, 12, 30, 70]
 

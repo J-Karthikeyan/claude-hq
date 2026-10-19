@@ -56,6 +56,11 @@ expect(Creature(species: 1, stage: 4, shiny: false, megaSlug: "gengar-mega").meg
 let evoJSON = #"{"sessions":[{"sessionId":"e","status":"idle","kind":"interactive","pid":1,"creature":{"species":4,"stage":4,"shiny":false,"evo":{"branchDex":700}}}]}"#
 expect(HQSession.parse(Data(evoJSON.utf8)).first?.creature?.dex(sessionId: "e") == 700, "creature.evo parsed: Sylveon")
 
+// shiny species from HQ's Pokédex (the notch reads no HQ files)
+let dexJSON = #"{"species":[{"species":3,"shiny":true},{"species":4,"shiny":false},{"species":-1,"shiny":true},{"species":"x","shiny":true}]}"#
+expect(Creature.parseShiny(Data(dexJSON.utf8)) == [3, 47], "shiny species parsed")
+expect(Creature.parseShiny(Data("nope".utf8)).isEmpty, "bad pokedex = none")
+
 // placement beside other notch apps
 expect(Placement.auto.resolved(otherNotchApp: true) == .left && Placement.auto.resolved(otherNotchApp: false) == .notch, "auto steps aside")
 expect(Placement.right.resolved(otherNotchApp: false) == .right && Placement.notch.resolved(otherNotchApp: true) == .notch, "a fixed choice stays")
