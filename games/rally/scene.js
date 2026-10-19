@@ -756,7 +756,7 @@ function create(THREE, canvas, opts){
     var p = FX.list[FX.next]; FX.next = (FX.next + 1) % PMAX;
     p.x = x; p.y = y; p.z = z; p.vx = vx; p.vy = vy; p.vz = vz; p.s = size; p.gr = grow; p.life = life; p.max = life; p.c = color; p.a = alpha; p.grav = grav;
   }
-  var DUST = {1: 0xc9b38e, 2: 0xb28d64, 3: 0x8d9a5a, 4: 0x6b5236, 5: 0xf4f8fc, 6: 0xcdb894, 0: 0xb0b0b0};
+  var DUST = {1: 0xc9b38e, 2: 0xb28d64, 3: 0x8a7d5c, 4: 0x6b5236, 5: 0xf4f8fc, 6: 0xcdb894, 0: 0xb0b0b0};
   R.fx = function(car, dt, calmOn){
     if(!FX || !car || !car.wheels) return;
     var tel = car.tel, spd = tel.speed, i;
@@ -769,6 +769,7 @@ function create(THREE, canvas, opts){
       // dust: loose surfaces always throw some; slip throws a lot
       var amount = (loose ? 0.35*Math.min(1, ground/16) : 0) + Math.max(0, slip - 1)*0.5 + (loose ? Math.abs(wheelSpeed - Math.abs(w.vx))*0.06 : 0);
       if(sid === 0 && slip < 1.3) amount = 0;
+      if(sid === 3) amount *= 0.35;                 // grass throws clods, not clouds
       if(calmOn) amount *= 0.4;
       var n2 = amount*dt*(low ? 30 : 70);
       while(n2 > 0){
@@ -857,7 +858,17 @@ function create(THREE, canvas, opts){
       var dist = c.mode === 3 ? 7.5 : 6.0 + Math.min(1.2, spd*0.03), height = c.mode === 3 ? 2.6 : 2.05;
       var cx2 = Math.sin(cam.yaw), cz2 = -Math.cos(cam.yaw);
       TMP.set(P.p[0] - cx2*dist, cam.h + height, P.p[2] - cz2*dist);
-      if(R.stage){ var gh = R.stage.env.height(TMP.x, TMP.z) + 0.9; if(TMP.y < gh) TMP.y = gh; }
+      if(R.stage){
+        // never inside a tree: walk the camera in toward the car while a trunk (and its crown) is in the way
+        var px0 = P.p[0], pz0 = P.p[2];
+        for(var tries = 0; tries < 6; tries++){
+          var blocked = false, cxx = TMP.x, czz = TMP.z;
+          R.stage.env.obstacles(cxx, czz, 2.2, function(ox, oz, orr){ var ddx = cxx - ox, ddz = czz - oz; if(ddx*ddx + ddz*ddz < (orr + 1.9)*(orr + 1.9)) blocked = true; });
+          if(!blocked) break;
+          TMP.x = px0 + (TMP.x - px0)*0.75; TMP.z = pz0 + (TMP.z - pz0)*0.75; TMP.y += 0.35;
+        }
+        var gh = R.stage.env.height(TMP.x, TMP.z) + 0.9; if(TMP.y < gh) TMP.y = gh;
+      }
       cam.p.copy(TMP);
       var ahead = c.mode === 3 ? 0 : Math.min(8, spd*0.28);
       cam.look.set(P.p[0] + vx*ahead, P.p[1] + (c.mode === 3 ? 0.4 : 0.85), P.p[2] + vz*ahead);
