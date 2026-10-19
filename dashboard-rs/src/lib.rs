@@ -21,4 +21,5 @@ pub mod pyjson;
 pub mod scan;
 pub mod server;
 pub mod state;
+pub mod vial;
 pub mod worksignals;

@@ -155,7 +155,7 @@ fn games_allowlist_etag_and_save() {
     for bad in ["/games/..%2fdashboard.py", "/games/Core.js", "/games/golf/LICENSE-kenney.txt", "/games/golf//straight.glb", "/games/vendor/x.css"] {
         assert_eq!(get(srv.port, bad, "").0, 404, "{}", bad);
     }
-    for good in ["golf/courses.json", "golf/straight.glb", "vendor/three-core.js", "kart/tracks.json", "fps/map.json", "platformer/levels.json"] {
+    for good in ["golf/courses.json", "golf/straight.glb", "vendor/three-core.js", "kart/tracks.json", "fps/map.json", "platformer/levels.json", "strike/map.json"] {
         assert!(srv.app.game_file(good).is_some(), "{}", good);
     }
     let (code, head, _) = get(srv.port, "/games/golf/courses.json", "");
@@ -230,7 +230,7 @@ fn stream_sends_a_data_frame() {
     }
     let text = String::from_utf8_lossy(&buf);
     assert!(text.to_lowercase().contains("content-type: text/event-stream; charset=utf-8"));
-    assert!(text.contains("\"version\": \"2.5.0\""));
+    assert!(text.contains("\"version\": \"2.6.2\""));
 }
 
 /// A session id whose Pokemon is this species (test_evo_choice.py's sid_for).
@@ -333,4 +333,33 @@ fn notch_status_and_protected_install() {
 
     *srv.app.notch.mac_hook.write().unwrap() = Some(false);
     assert_eq!(post(&srv, "/api/notch/install", b"{}", "", true), (400, json!({"error": "HQ Notch is for macOS"})));
+}
+
+#[test]
+fn vial_spend_route_and_payload() {
+    let srv = serve();
+    let sid = "11111111-1111-4111-8111-111111111111";
+    assert!(server::post_paths().contains(&"/api/vial/spend"));
+    let spend = |body: Value| post(&srv, "/api/vial/spend", body.to_string().as_bytes(), "", true);
+    assert_eq!(spend(json!({"sessionId": "../x", "fromStage": 0})), (400, json!({"error": "invalid sessionId"})));
+    for stg in [json!(4), json!(-1), json!(true), json!(1.0), json!("1"), json!(null)] {
+        assert_eq!(spend(json!({"sessionId": sid, "fromStage": stg})), (400, json!({"error": "invalid fromStage"})), "{}", stg);
+    }
+    assert_eq!(spend(json!({"sessionId": sid, "fromStage": 0})), (200, json!({"ok": false, "error": "the vial is short", "cost": 30, "balance": 0})));
+    srv.app.vial_grant(100, claudehq::py::now_ts());
+    assert_eq!(spend(json!({"sessionId": sid, "fromStage": 1})), (200, json!({"ok": true, "cost": 90, "balance": 10})));
+    assert_eq!(post(&srv, "/api/vial/spend", json!({"sessionId": sid, "fromStage": 0}).to_string().as_bytes(), "", false).0, 403);
+
+    // A prompt-less transcript is still an archived card (2.5.2), and the payload carries the vial.
+    let quiet = "33333333-3333-4333-8333-333333333333";
+    let p = srv.app.paths.projects_dir.join("proj").join(format!("{}.jsonl", quiet));
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(&p, "{\"type\": \"assistant\", \"timestamp\": \"2026-09-01T10:00:00Z\", \"message\": {\"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}}\n").unwrap();
+    let v: Value = serde_json::from_slice(&get(srv.port, "/api/sessions", "").2).unwrap();
+    let card = v["sessions"].as_array().unwrap().iter().find(|s| s["sessionId"] == quiet).cloned().expect("prompt-less card");
+    assert_eq!((card["promptCount"].clone(), card["vialPoured"].clone()), (json!(0), json!(0)));
+    let keys: Vec<&String> = v.as_object().unwrap().keys().collect();
+    assert_eq!(keys.last().map(|k| k.as_str()), Some("vial"));
+    assert_eq!(v["vial"]["xp"], 10);
+    assert_eq!(v["vial"]["costs"], json!({"0": 30, "1": 90, "2": 180, "3": 400}));
 }

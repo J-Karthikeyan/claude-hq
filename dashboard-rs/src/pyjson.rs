@@ -131,10 +131,57 @@ pub fn dumps_sorted(v: &Value) -> String {
     dumps(&sort(v))
 }
 
+/// Stands in for a NaN / Infinity literal that json.loads accepts and serde
+/// cannot hold: a string, so every "is it a number" check rejects it, which is
+/// what Python's range checks do with those values.
+pub const NON_FINITE: &str = "\u{0}non-finite";
+
+/// json.loads for a state file Python may have written: like serde_json, but
+/// the NaN / Infinity / -Infinity literals parse (as NON_FINITE).
+pub fn loads_lenient(s: &str) -> Option<Value> {
+    if let Ok(v) = serde_json::from_str(s) {
+        return Some(v);
+    }
+    let mut out = String::with_capacity(s.len());
+    let (mut in_str, mut esc) = (false, false);
+    let mut rest = s;
+    let marker = serde_json::to_string(NON_FINITE).unwrap();
+    while let Some(c) = rest.chars().next() {
+        if in_str {
+            if esc {
+                esc = false;
+            } else if c == '\\' {
+                esc = true;
+            } else if c == '"' {
+                in_str = false;
+            }
+        } else if c == '"' {
+            in_str = true;
+        } else {
+            let hit = ["-Infinity", "Infinity", "NaN"].into_iter().find(|t| rest.starts_with(t));
+            if let Some(t) = hit {
+                out.push_str(&marker);
+                rest = &rest[t.len()..];
+                continue;
+            }
+        }
+        out.push(c);
+        rest = &rest[c.len_utf8()..];
+    }
+    serde_json::from_str(&out).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn lenient_loads_take_python_non_finite_literals() {
+        let v = loads_lenient(r#"{"a": [NaN, -Infinity, Infinity, 1], "s": "NaN \" Infinity"}"#).unwrap();
+        assert_eq!(v, json!({"a": [NON_FINITE, NON_FINITE, NON_FINITE, 1], "s": "NaN \" Infinity"}));
+        assert!(loads_lenient("{nope").is_none());
+    }
 
     #[test]
     fn matches_python_dumps() {

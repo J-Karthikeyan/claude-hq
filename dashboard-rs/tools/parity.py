@@ -39,17 +39,20 @@ CRATE = os.path.dirname(HERE)
 REPO = os.path.dirname(CRATE)
 
 CODE_FILES = ("dashboard.py", "arena.py", "music.py", "worksignals.py", "ext_boss.py", "ext_cups.py",
-              "ext_loot.py", "ext_maps.py", "ext_prestige.py", "ext_skills.py", "ext_notch.py", "index.html")
+              "ext_loot.py", "ext_maps.py", "ext_prestige.py", "ext_skills.py", "ext_skate.py", "ext_notch.py",
+              "index.html")
 # notch/ so /api/notch/status reports the installer as available (the install itself is never run here).
 CODE_DIRS = ("ui", "games", "notch")
-STATE_FILES = ("config.json", "sessions-meta.json", "meals.json", "games-save.json", ".dex-seed", "evo-choices.json")
+STATE_FILES = ("config.json", "sessions-meta.json", "meals.json", "games-save.json", ".dex-seed", "evo-choices.json",
+               "vial.json")
 
 # Values that legitimately differ between two processes or two instants.
 VOLATILE_KEYS = {"updated", "generated", "boot", "pid", "uptimeSecs", "cpuPct", "rssMb", "threads",
                  "load", "python", "impl", "ageSecs"}
 # Time-driven values (fatigue is recomputed against the wall clock on every build).
 CLOCK_KEYS = {"energy", "loadMins", "restInMins", "restMins", "streakMins", "phase", "state", "spark",
-              "sparkHourly", "stuck", "stuckReason", "mayFaint"}
+              "sparkHourly", "stuck", "stuckReason", "mayFaint",
+              "ttl"}   # the Overflow Vial: seconds until each drop dies
 
 
 def log(*a):
@@ -461,7 +464,7 @@ def run_gets(root):
               "/api/session/00000000-0000-4000-8000-000000000000", "/api/project?folder=../etc",
               "/api/search?q=", "/api/search?q=%20%20", "/api/digest?date=2026-09-01",
               "/api/digest?date=2026-10-10&days=7", "/api/digest?date=bad&days=x", "/api/history",
-              "/api/pokedex", "/api/insights", "/api/notch/status"]
+              "/api/pokedex", "/api/insights", "/api/notch/status", "/api/arena/skate"]
     for p in simple:
         compare_json("GET " + p, *both(get, p))
     compare_json("GET /api/server-stats (shape)", *both(get, "/api/server-stats"),
@@ -564,8 +567,23 @@ def post(port, path, body, token=True, headers=None):
     return request(port, "POST", path, body=data, headers=h)
 
 
+def seed_vial(root):
+    """Two live drops (450 XP), so a spend can succeed; the drip watermark is kept."""
+    path = os.path.join(root, "vial.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            seen = json.load(f).get("seenPrompts", 0)
+    except (OSError, ValueError, AttributeError):
+        seen = 0
+    now = time.time()
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"version": 1, "deposits": [{"at": now - 3600.0, "xp": 150}, {"at": now - 60.0, "xp": 300}],
+                   "spent": [], "seenPrompts": seen}, f, indent=2)
+
+
 def run_posts(root):
     log("\n== POST (state reset between servers) ==")
+    seed_vial(root)
     base = snapshot(root)
     sid = "11111111-1111-4111-8111-111111111111"
     rid = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
@@ -634,6 +652,22 @@ def run_posts(root):
         ("/api/evo-choice", {"sessionId": zard, "megaSlug": "<script>"}),
         ("/api/evo-choice", {"sessionId": "../../etc", "branchDex": 470}),
         ("/api/evo-choice", {"branchDex": 470}),
+        # Overflow Vial (seeded with 450 XP in two live drops)
+        ("/api/vial/spend", {"sessionId": sid, "fromStage": 0}),
+        ("/api/vial/spend", {"sessionId": sid, "fromStage": 2}),
+        ("/api/vial/spend", {"sessionId": sid, "fromStage": 3}),
+        ("/api/vial/spend", {"sessionId": sid, "fromStage": 4}),
+        ("/api/vial/spend", {"sessionId": sid, "fromStage": True}),
+        ("/api/vial/spend", {"sessionId": sid, "fromStage": 1.0}),
+        ("/api/vial/spend", {"sessionId": "../x", "fromStage": 0}),
+        ("/api/vial/spend", {}),
+        # skatepark (unpaired here: a valid combo stops at "not paired")
+        ("/api/arena/skate/combo", {"total": 800, "tricks": 2}),
+        ("/api/arena/skate/combo", {"total": 800.0, "tricks": 2}),
+        ("/api/arena/skate/combo", {"total": 0, "tricks": 2}),
+        ("/api/arena/skate/combo", {"total": 5.5, "tricks": 1}),
+        ("/api/arena/skate/combo", {"total": True, "tricks": 1}),
+        ("/api/arena/skate/combo", {"total": 5, "tricks": 11}),
     ]
     for path, body in cases:
         restore(root, base)
@@ -651,6 +685,13 @@ def run_posts(root):
                 continue
             try:
                 ja, jb = json.loads(a), json.loads(b)
+                if k == "vial.json":
+                    # each server stamps a spend with its own clock
+                    for j in (ja, jb):
+                        for s in j.get("spent", []) if isinstance(j, dict) else []:
+                            s.pop("at", None)
+                    if ja == jb:
+                        continue
                 d = diff(normalize(ja), normalize(jb))
                 if d:
                     notes += ["%s%s: py=%s rs=%s" % (k, p, short(x), short(y)) for p, x, y in d]
