@@ -58,6 +58,9 @@ function rsave(){
   return r;
 }
 function opt(name, fb){ var r = rsave(); return r[name] != null ? r[name] : fb; }
+// graphics quality: auto (picked from the measured frame rate) or fixed; the old "low detail" box maps to low
+var GFX = ["auto", "high", "medium", "low"];
+function gfxMode(){ var g = opt("gfx", null); if(GFX.indexOf(g) >= 0) return g; return opt("low", false) ? "low" : "auto"; }
 function setOpt(name, v){ rsave()[name] = v; api.persist(); }
 // stage keys seen in rooms (for the leaderboard picker in the Arena view): a per-viewer convenience
 function rememberKey(key, name){
@@ -108,7 +111,9 @@ var RALLY_BUTTONS = {hb: {keys: ["Space"], pad: [0, 2]}, rset: {keys: ["KeyR"], 
 function padValue(I, i){ var p = I && I.pad, b = p && p.buttons && p.buttons[i]; return b ? (typeof b === "object" ? b.value : +b) : 0; }
 function padAxis(I, i){ var p = I && I.pad, v = p && p.axes ? +p.axes[i] || 0 : 0; var D = 0.12; return Math.abs(v) < D ? 0 : (v - (v > 0 ? D : -D))/(1 - D); }
 
-var CAR_SWATCH = ["#e9eef2", "#2e6a4f", "#f0b23a"];
+// the HUD's display face: the page's own UI font (read once from --font), heavy and italic for the numbers
+var HUDF = (function(){ try { return (getComputedStyle(document.documentElement).getPropertyValue("--font") || "").trim() || "sans-serif"; } catch(e){ return "sans-serif"; } })();
+var CAR_SWATCH =["#e9eef2", "#2e6a4f", "#f0b23a"];
 var DIFFS = {awd: "AWD", rwd: "RWD", fwd: "FWD"};
 var INTERP = 0.12, JIT_MAX = 0.25, EXTRAP = 0.3, SNAPS = 12, SEND_EVERY = 1/16, CD_SECS = 3;
 
@@ -120,7 +125,7 @@ function makeGame(host, opts){
   var V = {mode: opts.mode || "solo", ctx: opts.ctx || null, alive: true, paused: false, phase: "menu", note: "",
     stage: null, info: null, key: null, car: null, handle: null, ghost: null, gate: 0, splits: [], raceT: 0, finishMs: null,
     event: null, cam: clamp(opt("cam", 0)|0, 0, 2), units: opt("units", "kmh") === "mph" ? "mph" : "kmh", assist: opt("assist", true) !== false,
-    low: !!opt("low", false), lobby: [], host: null, roomPhase: "idle", roomStage: null, others: {}, offset: null, sv: {lastQ: -1, off: null, jit: 0},
+    gfx: gfxMode(), low: false, lobby: [], host: null, roomPhase: "idle", roomStage: null, others: {}, offset: null, sv: {lastQ: -1, off: null, jit: 0},
     goAt: null, greenLocal: null, sendAt: 0, results: null, prog: {}, leaderAt: {}, fps: 60, frames: 0, fpsT: 0, padSeen: 0,
     thr: 0, brk: 0, hb: 0, rec: null, recT: 0, upsideT: 0, lastGatePos: null, hint: 0, unsupported: false, showMenu: false, pendingStart: null};
   V.myId = function(){ return V.mode === "mp" && MP ? MP.me() : "me"; };
@@ -129,9 +134,10 @@ function makeGame(host, opts){
   root.appendChild(menu); root.appendChild(stageBox); host.appendChild(root);
   var wrap = api.mk("div", "vg-golf-view vg-rally-view");
   // HUD
-  var hudTop = api.mk("div", "vg-rally-top"), hudTime = api.mk("b", "vg-rally-time", "0:00.000"), hudGate = api.mk("span", "vg-rally-gate", "GATE 1 OF 20");
+  var hudTop = api.mk("div", "vg-rally-top"), slab = api.mk("div", "vg-rally-slab"), hudTime = api.mk("b", "vg-rally-time", "0:00.000"), hudGate = api.mk("span", "vg-rally-gate", "GATE 1 OF 20");
   var strip = api.mk("canvas", "vg-rally-strip"), splitBox = api.mk("div", "vg-rally-split hidden");
-  hudTop.appendChild(hudTime); hudTop.appendChild(hudGate); hudTop.appendChild(strip); hudTop.appendChild(splitBox);
+  slab.appendChild(hudTime); slab.appendChild(hudGate);
+  hudTop.appendChild(slab); hudTop.appendChild(strip); hudTop.appendChild(splitBox);
   var hudBL = api.mk("div", "vg-rally-bl"), hudDist = api.mk("b", "vg-rally-dist", ""), bars = api.mk("canvas", "vg-rally-bars");
   hudBL.appendChild(hudDist); hudBL.appendChild(bars);
   var gauge = api.mk("canvas", "vg-rally-gauge");
@@ -269,7 +275,13 @@ function makeGame(host, opts){
     ts.addEventListener("change", function(){ setOpt("tc", ts.value); });
     tr.appendChild(api.mk("span", "vg-muted", "Traction control")); tr.appendChild(ts); box.appendChild(tr);
     check("Speed in mph", V.units === "mph", function(v){ V.units = v ? "mph" : "kmh"; setOpt("units", V.units); });
-    check("Low detail (faster on older laptops)", V.low, function(v){ V.low = v; setOpt("low", v); api.toast("Low detail applies from the next stage"); });
+    // graphics: outlines, shadows, grass and render scale; Auto starts high and steps down if frames run slow
+    var gr = api.mk("label", "vg-row"), gs = api.mk("select", "vg-select"); gs.setAttribute("aria-label", "Graphics quality");
+    [["auto", "Auto (by frame rate)"], ["high", "High"], ["medium", "Medium"], ["low", "Low (older laptops)"]].forEach(function(o){
+      var op = api.mk("option", null, o[1]); op.value = o[0]; if(o[0] === V.gfx) op.selected = true; gs.appendChild(op);
+    });
+    gs.addEventListener("change", function(){ V.gfx = gs.value; setOpt("gfx", V.gfx); applyGfx(true); });
+    gr.appendChild(api.mk("span", "vg-muted", "Graphics")); gr.appendChild(gs); box.appendChild(gr);
     var cr = api.mk("div", "vg-row"); cr.appendChild(api.mk("span", "vg-muted", "Camera"));
     ["Chase", "Bumper", "Hood"].forEach(function(n, i){ var b = api.btn(n, V.cam === i ? "primary" : "", function(){ V.cam = i; setOpt("cam", i); box.remove(); settingsDialog(where); }); b.setAttribute("aria-pressed", V.cam === i ? "true" : "false"); cr.appendChild(b); });
     box.appendChild(cr);
@@ -740,7 +752,7 @@ function makeGame(host, opts){
     if(V.event) gt = "STAGE " + (V.event.index + 1) + "/" + V.event.list.length + " · " + gt;
     if(hudGate.textContent !== gt) hudGate.textContent = gt;
     var L = st.locate(C.p[0], C.p[2], V.hint), left = Math.max(0, st.length - L.s);
-    var dt2 = V.finishMs != null ? "Stage complete" : left >= 1000 ? (left/1000).toFixed(2) + " km to finish" : Math.round(left) + " m to finish";
+    var dt2 = V.finishMs != null ? "FINISHED" : V.units === "mph" ? (left/1609.34).toFixed(2) + " MI" : (left/1000).toFixed(2) + " KM";
     if(hudDist.textContent !== dt2) hudDist.textContent = dt2;
     if(V.mode === "mp" && standDirty){
       standDirty = false; standBox.textContent = "";
@@ -766,88 +778,86 @@ function makeGame(host, opts){
     if(cv.width !== Math.round(W*dpr) || cv.height !== Math.round(H*dpr)){ cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr); }
     var g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H); return g;
   }
+  // bottom right: handbrake / clutch lamps, an arc tachometer with the gear inside, and the speed
+  // in big italic digits on a slab underneath
   function drawGauge(){
     var C = V.car; if(!C) return;
-    var W = 210, H = 170, g = sizeCanvas(gauge, W, H), T = TOK, tel = C.tel;
-    var spd = V.units === "mph" ? tel.speed*2.23694 : tel.speed*3.6, max = V.units === "mph" ? 140 : 220;
-    var cx = 108, cy = 98, r = 76, a0 = Math.PI*0.78, a1 = Math.PI*2.22;
-    function ang(v, m){ return a0 + (a1 - a0)*clamp(v/m, 0, 1); }
-    g.beginPath(); g.arc(cx, cy, r + 8, 0, Math.PI*2); g.fillStyle = T.panel; g.globalAlpha = 0.86; g.fill(); g.globalAlpha = 1;
-    g.lineWidth = 1.5; g.strokeStyle = T.line; g.stroke();
-    // speed ticks
-    g.lineCap = "round";
-    var major = V.units === "mph" ? 20 : 20;
-    for(var v = 0; v <= max + 1e-6; v += major/2){
-      var isMaj = v % major === 0, a = ang(v, max), r1 = r + 2, r2 = r - (isMaj ? 10 : 6);
-      g.beginPath(); g.moveTo(cx + Math.cos(a)*r1, cy + Math.sin(a)*r1); g.lineTo(cx + Math.cos(a)*r2, cy + Math.sin(a)*r2);
-      g.lineWidth = isMaj ? 2 : 1; g.strokeStyle = T.muted; g.stroke();
-      if(isMaj && v % (major*2) === 0){ g.fillStyle = T.muted; g.font = "600 9px " + T.mono; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(String(v), cx + Math.cos(a)*(r - 19), cy + Math.sin(a)*(r - 19)); }
+    var W = 230, H = 218, g = sizeCanvas(gauge, W, H), T = TOK, tel = C.tel;
+    var spd = V.units === "mph" ? tel.speed*2.23694 : tel.speed*3.6;
+    var e = C.spec.engine, rmax = Math.ceil(e.limiter/1000)*1000;
+    var cx = 152, cy = 116, r = 50, a0 = Math.PI*0.8, a1 = Math.PI*2.2;
+    function ang(v){ return a0 + (a1 - a0)*clamp(v/rmax, 0, 1); }
+    // lamps
+    [["HANDBRAKE", tel.hand], ["CLUTCH", !C.locked && C.gear !== 0], ["TC", C.tc && tel.tc]].forEach(function(l, i){
+      if(l[0] === "TC" && !C.tc) return;
+      var y = 6 + i*15;
+      g.fillStyle = T.panel; g.globalAlpha = 0.86; g.fillRect(W - 92, y, 92, 13); g.globalAlpha = 1;
+      g.fillStyle = l[1] ? (i === 2 ? T.gold : T.need) : T.line; g.fillRect(W - 88, y + 3, 7, 7);
+      g.fillStyle = l[1] ? T.ink : T.muted; g.font = "800 9px " + HUDF; g.textAlign = "left"; g.textBaseline = "middle"; g.fillText(l[0], W - 77, y + 7);
+    });
+    // the tach: a thick segmented arc, filled in the accent colour, red past the shift point
+    g.beginPath(); g.arc(cx, cy, r + 9, a0 - 0.08, a1 + 0.08); g.lineWidth = 6; g.strokeStyle = T.panel; g.globalAlpha = 0.8; g.stroke(); g.globalAlpha = 1;
+    var seg = 22;
+    for(var k = 0; k < seg; k++){
+      var u0 = k/seg, u1 = (k + 0.78)/seg, s0 = a0 + (a1 - a0)*u0, s1 = a0 + (a1 - a0)*u1, rpmAt = u0*rmax;
+      g.beginPath(); g.arc(cx, cy, r, s0, s1); g.lineWidth = 13;
+      var lit = rpmAt <= C.rpm, red = rpmAt >= C.spec.shiftUp;
+      g.strokeStyle = lit ? (red ? T.need : T.brand) : (red ? T.need : T.line); g.globalAlpha = lit ? 1 : 0.55; g.stroke(); g.globalAlpha = 1;
     }
-    // RPM arc inside, red from the shift point
-    var e = C.spec.engine, rmax = Math.ceil(e.limiter/1000)*1000, rr = r - 30;
-    g.beginPath(); g.arc(cx, cy, rr, a0, a1); g.lineWidth = 7; g.strokeStyle = T.bg2; g.stroke();
-    g.beginPath(); g.arc(cx, cy, rr, ang(C.spec.shiftUp, rmax), a1); g.lineWidth = 7; g.strokeStyle = T.need; g.globalAlpha = 0.45; g.stroke(); g.globalAlpha = 1;
-    g.beginPath(); g.arc(cx, cy, rr, a0, ang(C.rpm, rmax)); g.lineWidth = 7; g.strokeStyle = C.rpm > C.spec.shiftUp ? T.need : T.brand; g.stroke();
-    // gear (above the pivot), big digital speed (below it), then the needle over both
+    g.beginPath(); g.arc(cx, cy, r - 12, 0, Math.PI*2); g.fillStyle = T.panel; g.globalAlpha = 0.88; g.fill(); g.globalAlpha = 1;
     var gear = C.gear < 0 ? "R" : C.shiftT > 0 ? String(C.pend > 0 ? C.pend : "N") : String(C.gear);
-    g.fillStyle = T.panel2; g.fillRect(cx - 15, cy - 44, 30, 30); g.strokeStyle = T.line; g.lineWidth = 1; g.strokeRect(cx - 15, cy - 44, 30, 30);
-    g.fillStyle = C.shiftT > 0 ? T.muted : T.ink; g.font = "800 22px " + T.mono; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(gear, cx, cy - 28);
-    g.fillStyle = T.ink; g.font = "800 30px " + T.mono; g.textBaseline = "alphabetic";
-    g.fillText(String(Math.round(spd)), cx, cy + 38);
-    g.fillStyle = T.muted; g.font = "600 10px " + T.mono; g.fillText(V.units === "mph" ? "MPH" : "KM/H", cx, cy + 51);
-    g.font = "600 9px " + T.mono; g.fillText("RPM ×1000  " + (C.rpm/1000).toFixed(1), cx, cy + 63);
-    var an = ang(spd, max);
-    g.beginPath(); g.moveTo(cx - Math.cos(an)*8, cy - Math.sin(an)*8); g.lineTo(cx + Math.cos(an)*(r - 4), cy + Math.sin(an)*(r - 4));
-    g.lineWidth = 3; g.strokeStyle = T.need; g.stroke();
-    g.beginPath(); g.arc(cx, cy, 5, 0, Math.PI*2); g.fillStyle = T.ink; g.fill();
+    g.fillStyle = C.shiftT > 0 ? T.muted : T.ink; g.font = "italic 900 40px " + HUDF; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(gear, cx, cy + 2);
+    g.fillStyle = T.muted; g.font = "700 8px " + HUDF; g.fillText("×1000 RPM", cx, cy + 27);
+    // speed slab
+    var sx = 66, sy = 154, sw = W - sx, sh = 62;
+    g.fillStyle = T.panel; g.globalAlpha = 0.9; g.fillRect(sx, sy, sw, sh); g.globalAlpha = 1;
+    g.fillStyle = T.brand; g.fillRect(sx, sy, sw, 3);
+    g.fillStyle = T.ink; g.font = "italic 900 46px " + HUDF; g.textAlign = "right"; g.textBaseline = "alphabetic";
+    g.fillText(String(Math.round(spd)), W - 44, sy + 52);
+    g.fillStyle = T.muted; g.font = "800 10px " + HUDF; g.textAlign = "left"; g.fillText(V.units === "mph" ? "MPH" : "KM/H", W - 40, sy + 52);
   }
+  // bottom left: steering, throttle and brake bars
   function drawBars(){
     var C = V.car; if(!C) return;
-    var W = 170, H = 54, g = sizeCanvas(bars, W, H), T = TOK, tel = C.tel;
+    var W = 176, H = 50, g = sizeCanvas(bars, W, H), T = TOK, tel = C.tel;
     function bar(y, label, v, col, centred){
-      g.fillStyle = T.muted; g.font = "600 9px " + T.mono; g.textAlign = "left"; g.textBaseline = "middle"; g.fillText(label, 0, y + 4);
-      g.fillStyle = T.bg2; g.fillRect(44, y, 120, 8);
+      g.fillStyle = T.muted; g.font = "800 9px " + HUDF; g.textAlign = "left"; g.textBaseline = "middle"; g.fillText(label, 0, y + 5);
+      g.fillStyle = T.line; g.fillRect(48, y, 126, 10);
       g.fillStyle = col;
-      if(centred){ var w = v*60; g.fillRect(104 + Math.min(0, w), y, Math.abs(w), 8); g.fillStyle = T.ink; g.fillRect(103.5, y - 1, 1, 10); }
-      else g.fillRect(44, y, 120*clamp(v, 0, 1), 8);
+      if(centred){ var w = v*63; g.fillRect(111 + Math.min(0, w), y, Math.abs(w), 10); g.fillStyle = T.ink; g.fillRect(110.5, y - 1, 1, 12); }
+      else g.fillRect(48, y, 126*clamp(v, 0, 1), 10);
     }
-    bar(2, "STEER", clamp(C.steerIn, -1, 1), T.brand, true);
-    bar(16, "THROT", tel.throttle, T.good, false);
-    bar(30, "BRAKE", tel.brake, T.need, false);
-    g.fillStyle = tel.hand ? T.need : T.muted; g.font = "700 9px " + T.mono; g.fillText(tel.hand ? "HANDBRAKE" : (tel.drift ? "DRIFT " + Math.round(Math.abs(tel.beta)*57.3) + "°" : (P.SURFACES[tel.surface] || {}).name || ""), 44, 48);
-    if(C.tc){ g.fillStyle = tel.tc ? T.gold : T.muted; g.textAlign = "right"; g.fillText("TC", 164, 48); g.textAlign = "left"; }
+    bar(2, "STEER", clamp(C.steerIn, -1, 1), T.ink, true);
+    bar(19, "THROT", tel.throttle, T.good, false);
+    bar(36, "BRAKE", tel.brake, T.need, false);
   }
-  // the next stretch of road, straightened out ahead of the car (travel to the right)
+  // under the timer: a small map tile of the road ahead (travel is up), the car an arrow at the bottom
   function drawStrip(){
     var st = V.stage, C = V.car; if(!st || !C) return;
-    var W = 300, H = 58, g = sizeCanvas(strip, W, H), T = TOK;
-    var L = st.locate(C.p[0], C.p[2], V.hint), s0 = L.s, AHEAD = 600, sx = (W - 30)/AHEAD;
-    g.fillStyle = T.panel; g.globalAlpha = 0.82; g.fillRect(0, 0, W, H); g.globalAlpha = 1;
-    // project the road ahead into the car's heading frame at the strip's scale
-    var P0 = st.pointAtS(s0), h0 = P0.h, ch = Math.cos(h0), sh = Math.sin(h0);
-    var maxA = 30, pts = [];
-    for(var d = 0; d <= AHEAD; d += 10){
-      var p = st.pointAtS(s0 + d), dx = p.x - P0.x, dz = p.z - P0.z;
-      var along = dx*sh - dz*ch, lat = dx*ch + dz*sh;
-      pts.push([along, lat]); maxA = Math.max(maxA, Math.abs(lat));
+    var W = 150, H = 84, g = sizeCanvas(strip, W, H), T = TOK;
+    var L = st.locate(C.p[0], C.p[2], V.hint), s0 = L.s, AHEAD = 420;
+    g.fillStyle = T.panel; g.globalAlpha = 0.78; g.fillRect(0, 0, W, H); g.globalAlpha = 1;
+    var hd = P.headingOf(C.M), ch = Math.cos(hd), sh = Math.sin(hd);
+    var pts = [], ext = 40;
+    for(var d = -20; d <= AHEAD; d += 8){
+      var p = st.pointAtS(clamp(s0 + d, 0, st.length)), dx = p.x - C.p[0], dz = p.z - C.p[2];
+      var fwd = dx*sh - dz*ch, lat = dx*ch + dz*sh;
+      pts.push([lat, fwd]); ext = Math.max(ext, Math.abs(lat)*1.25, fwd*0.62);
       if(s0 + d >= st.length) break;
     }
-    var sy = (H/2 - 7)/maxA;
-    g.beginPath();
-    pts.forEach(function(q, i){ var x = 18 + q[0]*sx, y = H/2 + q[1]*sy; if(i) g.lineTo(x, y); else g.moveTo(x, y); });
-    g.lineJoin = "round"; g.lineCap = "round"; g.lineWidth = 6; g.strokeStyle = T.line; g.stroke(); g.lineWidth = 2.5; g.strokeStyle = T.ink; g.stroke();
-    // gates ahead (the next one in the accent colour, the finish in gold)
+    var sc = (H - 14)/ext, ox = W/2, oy = H - 10;
+    g.save(); g.beginPath(); g.rect(0, 0, W, H); g.clip();
+    g.beginPath(); pts.forEach(function(q, i){ var x = ox + q[0]*sc, y = oy - q[1]*sc; if(i) g.lineTo(x, y); else g.moveTo(x, y); });
+    g.lineJoin = "round"; g.lineCap = "round"; g.lineWidth = 7; g.strokeStyle = T.line; g.stroke(); g.lineWidth = 3.5; g.strokeStyle = T.ink; g.stroke();
     st.gates.forEach(function(gt, i){
       if(i < V.gate) return;
-      var gs = st.gateS[i], d2 = gs - s0; if(d2 < 0 || d2 > AHEAD) return;
-      var p = st.pointAtS(gs), dx = p.x - P0.x, dz = p.z - P0.z, x = 18 + (dx*sh - dz*ch)*sx, y = H/2 + (dx*ch + dz*sh)*sy;
-      g.fillStyle = i === st.gates.length - 1 ? T.gold : i === V.gate ? T.brand : T.muted;
-      g.fillRect(x - 1.5, y - 7, 3, 14);
+      var gs = st.gateS[i], d2 = gs - s0; if(d2 < -20 || d2 > AHEAD) return;
+      var p = st.pointAtS(gs), dx = p.x - C.p[0], dz = p.z - C.p[2], x = ox + (dx*ch + dz*sh)*sc, y = oy - (dx*sh - dz*ch)*sc;
+      g.beginPath(); g.arc(x, y, 3.2, 0, Math.PI*2); g.fillStyle = i === st.gates.length - 1 ? T.gold : i === V.gate ? T.brand : T.muted; g.fill();
     });
-    // the car, and how far off the line it is
-    var cy = H/2 + clamp(L.lat, -maxA, maxA)*sy;
-    g.beginPath(); g.arc(18, cy, 4.5, 0, Math.PI*2); g.fillStyle = T.need; g.fill(); g.lineWidth = 1.5; g.strokeStyle = T.ink; g.stroke();
-    g.fillStyle = T.muted; g.font = "600 8px " + T.mono; g.textAlign = "right"; g.textBaseline = "top"; g.fillText(AHEAD + " m", W - 4, 3);
+    g.beginPath(); g.moveTo(ox, oy - 8); g.lineTo(ox + 5.5, oy + 5); g.lineTo(ox, oy + 2); g.lineTo(ox - 5.5, oy + 5); g.closePath();
+    g.fillStyle = T.brand; g.fill(); g.lineWidth = 1.2; g.strokeStyle = T.ink; g.stroke();
+    g.restore();
   }
 
   /* ---------- renderer ---------- */
@@ -870,7 +880,8 @@ function makeGame(host, opts){
       load.classList.remove("hidden"); loadFill.style.width = "15%";
       E.lib().then(function(lib){
         if(!V.alive) return;
-        R3 = HQV.rallyScene.create(lib.THREE, canvas, {low: V.low});
+        R3 = HQV.rallyScene.create(lib.THREE, canvas, {quality: V.gfx === "auto" ? "high" : V.gfx});
+        V.quality = R3.quality; V.low = V.quality === "low"; perf.auto = {t: 0, n: 0, wait: 2.5};
         resize();
         var w = renderWait; renderWait = []; w.forEach(function(f){ f(); });
       }, function(){
@@ -944,10 +955,29 @@ function makeGame(host, opts){
       FAKE.wheels.forEach(function(w){ w.ang = (o.ang) % (Math.PI*2); });
       R3.poseCar(o.handle, GPOSE, FAKE);
     });
-    R3.fx(C, dt, calm());
+    R3.fx(C, dt, calm(), V.handle);
     R3.render(dt, {mode: V.phase === "done" ? 3 : V.cam, pose: POSE, car: C, calm: calm()});
   }
-  var perf = {t: 0, n: 0, slow: 0, pr: null};
+  var perf = {t: 0, n: 0, slow: 0, pr: null, auto: null};
+  // Graphics: a fixed level is applied at once; Auto measures ~3 s of driving after each change
+  // and steps down (high > medium > low) while the frame rate stays under 45 fps. It never steps
+  // back up by itself in a stage, so the picture doesn't flip back and forth.
+  function applyGfx(user){
+    if(!R3) return;
+    var q = V.gfx === "auto" ? (user ? "high" : R3.quality) : V.gfx;
+    R3.setQuality(q); V.quality = R3.quality; V.low = V.quality === "low"; perf.pr = null;
+    perf.auto = {t: 0, n: 0, wait: 2};
+  }
+  function autoGfx(dt){
+    var A = perf.auto; if(!A || V.gfx !== "auto" || V.paused) return;
+    if(A.wait > 0){ A.wait -= dt; return; }
+    A.t += dt; A.n++;
+    if(A.t < 3) return;
+    var fps = A.n/A.t; A.t = 0; A.n = 0;
+    var next = fps < 45 ? (R3.quality === "high" ? "medium" : R3.quality === "medium" ? "low" : null) : null;
+    if(next){ R3.setQuality(next); V.quality = next; V.low = next === "low"; A.wait = 1.5; }
+    else perf.auto = null;
+  }
   function frame(ts){
     if(!V.alive) return;
     raf = requestAnimationFrame(frame);
@@ -957,12 +987,13 @@ function makeGame(host, opts){
       update(dt, now());
       if(R3) renderScene(dt, now()); else if(R2) R2.render();
       if(t - hudAt > 0.08){ hudAt = t; hudUpdate(); }
+      if(R3 && V.car && V.phase !== "menu") autoGfx(dt);
       if(t - gaugeAt > (V.low ? 1/15 : 1/30)){ gaugeAt = t; drawGauge(); drawBars(); drawStrip(); }
       // frame rate, and a lower resolution when frames run long
       V.frames++; perf.n++; perf.t += dt;
       if(perf.t > 2){
         V.fps = perf.n/perf.t; perf.n = 0; perf.t = 0;
-        if(R3 && V.fps < 28 && V.car){ perf.pr = Math.max(0.6, (perf.pr || Math.min(window.devicePixelRatio || 1, 1.5)) - 0.2); R3.setPixelRatio(perf.pr); }
+        if(R3 && V.fps < 28 && V.car && (V.gfx !== "auto" || V.low)){ perf.pr = Math.max(0.6, (perf.pr || Math.min(window.devicePixelRatio || 1, 1.5)) - 0.2); R3.setPixelRatio(perf.pr); }
       }
     } catch(e){ if(window.console) console.error("rally frame", e); }
   }
@@ -1015,7 +1046,7 @@ function makeGame(host, opts){
     return true;
   };
   V.debug = function(){ return {phase: V.phase, gate: V.gate, gates: V.stage ? V.stage.gates.length : 0, fps: V.fps, raceMs: V.raceT*1000, speed: V.car ? V.car.tel.kmh : 0,
-    drift: V.car ? V.car.tel.drift : false, surface: V.car ? V.car.tel.surface : -1, renderer: R3 ? "3d" : R2 ? "2d" : "", info: R3 ? R3.info() : null, finishMs: V.finishMs}; };
+    drift: V.car ? V.car.tel.drift : false, surface: V.car ? V.car.tel.surface : -1, renderer: R3 ? "3d" : R2 ? "2d" : "", quality: V.quality, info: R3 ? R3.info() : null, finishMs: V.finishMs}; };
   return V;
 }
 

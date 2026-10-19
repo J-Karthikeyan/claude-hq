@@ -407,6 +407,23 @@ function build(opts, doc){
     sc.trees.push({x: px, z: pz, y: ty, t: type, s: scl, r: rot, v: dr()});
     if(dlat < edge + 30) addObst(px, pz, 0.45*scl + 0.15);
   }
+  // forest walls: in the forest the trees crowd the road, a row or two deep just past the
+  // ditch, broken by seeded clearings (a separate stream, so nothing else moves)
+  if(biome === "forest"){
+    var wr = mulberry32((decoSeed ^ 0x5eed11) >>> 0), wallStep = biome === "forest" ? 3.4 : 4.4;
+    for(var wsv = 24; wsv < roadLen - 12; wsv += wallStep){
+      var wp = pointAtS(pts, wsv);
+      for(var wsd = -1; wsd <= 1; wsd += 2){
+        var wroll = wr(), woff = edge + 1.3 + wr()*4.5, wjit = (wr() - 0.5)*1.6, wkind = wr(), wscl = 0.85 + wr()*0.6, wrot = wr()*TAU, wv = wr();
+        if(clump(wp.x/40 + wsd*9, wp.z/40)*0.5 + 0.5 < 0.3 || wroll > 0.82) continue;
+        var wx = wp.x + Math.cos(wp.h)*woff*wsd + Math.sin(wp.h)*wjit, wz = wp.z + Math.sin(wp.h)*woff*wsd - Math.cos(wp.h)*wjit;
+        if(latAt(wx, wz) < edge + 1.1) continue;
+        var wtype = biome === "snow" ? (wkind < 0.92 ? 0 : 2) : (wkind < 0.6 ? 0 : wkind < 0.93 ? 1 : 2);
+        sc.trees.push({x: wx, z: wz, y: height(wx, wz), t: wtype, s: wscl, r: wrot, v: wv});
+        addObst(wx, wz, 0.45*wscl + 0.15);
+      }
+    }
+  }
   // rocks: scattered, plus a few on the outside of corners
   for(var rk = 0; rk < (biome === "hills" ? 520 : 360); rk++){
     var rp = pts[Math.floor(dr()*np)], side = dr() < 0.5 ? -1 : 1, off = edge + 2 + dr()*70;
