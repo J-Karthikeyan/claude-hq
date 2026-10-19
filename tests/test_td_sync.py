@@ -1,4 +1,4 @@
-"""Tower Defense: the rules block in games/td.js mirrors backend-rs/src/valley/td.rs.
+"""Tower Defense: the rules block in games/td.js mirrors backend/src/valley/td.rs.
 
 Both files carry a `TD-RULES BEGIN ... END` block of one-line constants. Every
 constant (numbers, the MULT4 table, the type and kind names, and each map's path
@@ -31,7 +31,7 @@ def block(*parts):
 
 class TdRulesSync(unittest.TestCase):
     def setUp(self):
-        self.rs = block("backend-rs", "src", "valley", "td.rs")
+        self.rs = block("backend", "src", "valley", "td.rs")
         self.js = block("games", "td.js")
 
     def test_every_constant_matches(self):

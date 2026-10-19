@@ -37,7 +37,7 @@ one hook entry per event (plus the `--ask` question hook) to `~/.claude/settings
 own relay. New Claude Code sessions report to the notch right away. Sessions already open
 pick the hooks up once they reload their settings.
 
-Claude HQ (`python3 dashboard.py`) is optional. When it is running, the notch reads
+Claude HQ (`claudehq`, from `dashboard-rs/`) is optional. When it is running, the notch reads
 `/api/sessions` on `127.0.0.1` for each session's creature, title and prompt count, and lists
 live sessions that started before the notch. Without HQ, the notch computes the same
 species/stage/shiny itself (shinies from HQ's Pokédex, remembered while HQ is closed; the notch never reads HQ's files,
@@ -80,7 +80,7 @@ Claude Code ──hooks──▶ hq_notch_hook.py ──Unix socket──▶ HQ 
   the alerts, so keep it to yourself, or press *New* for another. The ntfy server sees your IP
   address and when you get alerts.
 - **Same Pokémon as HQ.** `Creature.swift` ports `creature_for()` / `shiny_for_species()`
-  from `dashboard.py` and `pokeDexFor()` from `ui/app/06-trainer-packs.js`. The evolution
+  from HQ (`dashboard-rs/src/creature.rs`) and `pokeDexFor()` from `ui/app/06-trainer-packs.js`. The evolution
   lines are generated from the JS (`tools/gen_pokedata.py`). Like HQ's cards, a species never
   shows an earlier form than the highest stage you've reached with it: the notch reads each
   species' `maxStage` from HQ's `/api/pokedex` (at most once a minute, remembered while HQ is

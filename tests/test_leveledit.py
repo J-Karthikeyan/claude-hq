@@ -2,9 +2,9 @@
 Platformer Rush level is.
 
 The editor's live check (the LEVEL-RULES block) mirrors validate_custom in
-backend-rs/src/platformer.rs: the same caps and route-envelope constants (compared here by
+backend/src/platformer.rs: the same caps and route-envelope constants (compared here by
 regex), the same refusals for the same broken levels, and the same canonical form, pinned by
-content key against the keys backend-rs/src/platformer/tests.rs pins from the Rust side.
+content key against the keys backend/src/platformer/tests.rs pins from the Rust side.
 The route envelope is the browser character's own jump (games/platformer.js). Stdlib only;
 the JS half runs under node when it is installed."""
 import hashlib
@@ -18,7 +18,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EDITOR = os.path.join(ROOT, "games", "leveledit.js")
 PLAT_JS = os.path.join(ROOT, "games", "platformer.js")
-PLAT_RS = os.path.join(ROOT, "backend-rs", "src", "platformer.rs")
+PLAT_RS = os.path.join(ROOT, "backend", "src", "platformer.rs")
 LEVELS = os.path.join(ROOT, "games", "platformer", "levels.json")
 NODE = shutil.which("node")
 
@@ -69,7 +69,7 @@ def js_list(name):
 
 
 def custom_data():
-    """The same level as custom_data() in backend-rs/src/platformer/tests.rs."""
+    """The same level as custom_data() in backend/src/platformer/tests.rs."""
     return {
         "kill": -6, "coopGoal": 2, "coopSecs": 90,
         "theme": {"sky": "#8FD3FF", "fog": "#cdeeff", "sea": "#5aa9e6", "light": "#fff6e0"},
@@ -158,7 +158,7 @@ def bad_cases():
     ]
 
 
-# The keys custom_keys_are_pinned_for_the_editor pins in backend-rs/src/platformer/tests.rs:
+# The keys custom_keys_are_pinned_for_the_editor pins in backend/src/platformer/tests.rs:
 # custom_data(), then meadow, sky and fortress.
 PINNED = ["c-ca296b942375", "c-afd79d84fac1", "c-80356f2bd64f", "c-b8253b24bae3"]
 

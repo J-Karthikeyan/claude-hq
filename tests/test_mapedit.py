@@ -1,11 +1,11 @@
 """Map Editor (HQ 2.5): the editor's live checks must agree with the Arena referee.
 
 games/mapedit.js checks a Blaster map as you build it with the shared geometry of
-games/fps.js (the FPS-SHARED block) and with limits copied from backend-rs/src/fps.rs
+games/fps.js (the FPS-SHARED block) and with limits copied from backend/src/fps.rs
 (validate_custom). These tests pin the copied limits to the Rust constants, run the
 editor's pure functions under node (when it is installed) against hand-made maps, and
 check that the editor's starter maps still equal the fixtures the Rust tests validate
-(backend-rs/src/fps/tests.rs, MAPEDIT-STARTERS). Stdlib only."""
+(backend/src/fps/tests.rs, MAPEDIT-STARTERS). Stdlib only."""
 import json
 import os
 import re
@@ -16,8 +16,8 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAPEDIT = os.path.join(ROOT, "games", "mapedit.js")
 FPS_JS = os.path.join(ROOT, "games", "fps.js")
-FPS_RS = os.path.join(ROOT, "backend-rs", "src", "fps.rs")
-FPS_TESTS_RS = os.path.join(ROOT, "backend-rs", "src", "fps", "tests.rs")
+FPS_RS = os.path.join(ROOT, "backend", "src", "fps.rs")
+FPS_TESTS_RS = os.path.join(ROOT, "backend", "src", "fps", "tests.rs")
 VIEWS = os.path.join(ROOT, "ui", "app", "10-views.js")
 COURTYARD = os.path.join(ROOT, "games", "fps", "map.json")
 NODE = shutil.which("node")
@@ -206,7 +206,7 @@ class MapEditNode(unittest.TestCase):
             self.assertEqual(y, {"errors": 0, "warns": 0})
         block = re.search(r"/\* MAPEDIT-STARTERS BEGIN \*/(.*?)/\* MAPEDIT-STARTERS END \*/", read(FPS_TESTS_RS), re.S).group(1)
         fixtures = [json.loads(s) for s in re.findall(r'r##"(.*?)"##', block, re.S)]
-        self.assertEqual(fixtures, self.out["starters"], "regenerate MAPEDIT-STARTERS in backend-rs/src/fps/tests.rs")
+        self.assertEqual(fixtures, self.out["starters"], "regenerate MAPEDIT-STARTERS in backend/src/fps/tests.rs")
 
     def test_canonical_form(self):
         c = self.out["canon"]

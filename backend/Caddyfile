@@ -1,0 +1,28 @@
+# Terminates TLS and proxies to the app. Websockets need no special config:
+# Caddy forwards Upgrade/Connection headers on its own.
+{$ARENA_DOMAIN} {
+	encode zstd gzip
+
+	# Long-lived connections: game rooms hold a websocket open, and the board
+	# stream is server-sent events. Without this they would be cut at 60s.
+	reverse_proxy app:8080 {
+		flush_interval -1
+		transport http {
+			read_timeout 0
+			write_timeout 0
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}

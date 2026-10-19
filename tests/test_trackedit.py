@@ -1,7 +1,7 @@
 """HQ 2.5 Track Editor (games/trackedit.js) and custom tracks in Kart Racing.
 
 Static checks always run: the editor follows the games/ rules, its limits match the
-Arena's (backend-rs/src/kart.rs), it registers the Workshop maker and stays inside its
+Arena's (backend/src/kart.rs), it registers the Workshop maker and stays inside its
 own save key, and games/kart.js only offers custom races on an Arena that says "maps".
 With node installed, the editor's TRACKEDIT-WALK block runs on fixtures: every built-in
 track round-trips grid -> tiles, broken loops get a plain-words reason, and the starting
@@ -16,7 +16,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EDITOR = os.path.join(ROOT, "games", "trackedit.js")
 KART_JS = os.path.join(ROOT, "games", "kart.js")
-KART_RS = os.path.join(ROOT, "backend-rs", "src", "kart.rs")
+KART_RS = os.path.join(ROOT, "backend", "src", "kart.rs")
 TRACKS = os.path.join(ROOT, "games", "kart", "tracks.json")
 NODE = shutil.which("node")
 
@@ -77,10 +77,11 @@ class TrackEditorStatic(unittest.TestCase):
         doc = doc[:doc.index("\n}")]
         keys = set(re.findall(r"\b([a-zA-Z]+):", doc))
         self.assertEqual(keys, {"kind", "v", "name", "data", "tiles", "scenery", "theme", "sky", "fog", "ground"})
-        import sys
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        from test_arena import FORBIDDEN_KEYS
-        self.assertEqual(keys & set(FORBIDDEN_KEYS), set())
+        # Local-only fields that must never reach the Arena (was test_arena.FORBIDDEN_KEYS).
+        forbidden = {"prompt", "prompts_text", "reply", "text", "content", "path", "paths",
+                     "cwd", "folder", "project", "projectName", "sessionId", "sessionTitle",
+                     "title", "file", "files"}
+        self.assertEqual(keys & forbidden, set())
 
     def test_publish_only_when_the_workshop_is_here(self):
         self.assertIn('typeof window.workshopPublish === "function"', self.src)

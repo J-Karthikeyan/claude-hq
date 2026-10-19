@@ -6,7 +6,7 @@
 // you wear, never counts. Panels: the Compete view (order 30), skillsOpen() (a modal), and
 // a strip on every trainer card (TCARD_EXTRAS).
 var SKILLS = {data:null, at:0, local:null, busy:false};
-// Mirrors backend-rs/src/skills.rs CATS / PERKS / TIERS (tests/test_skills_proxy.py keeps them in step).
+// Mirrors backend/src/skills.rs CATS / PERKS / TIERS (tests/test_skills_proxy.py keeps them in step).
 var SKILL_TIERS = [10,50,150,400,1000];
 var SKILL_CATS = [
   {id:"tests",    name:"Testing",     icon:"🧪", how:"running test suites and editing tests",

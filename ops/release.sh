@@ -4,27 +4,27 @@
 # and roll back to the previous build if it is not healthy.
 #
 #   ops/release.sh check                  run every test suite locally (before you merge)
-#   ops/release.sh deploy                 ship origin/main (Python Arena)
-#   ARENA_IMPL=rs ops/release.sh deploy   ship origin/main as the Rust Arena
+#   ops/release.sh deploy                 ship origin/main
 #   ops/release.sh rollback               go back to the previous release (no rebuild)
 #   ops/release.sh status                 what is running, and the release history
 #
 # Run deploy/rollback/status on the Arena host, from the repo checkout. Each
-# release is a tagged image (claude-hq-arena-<impl>:<version>, the version being
+# release is a tagged image (claude-hq-arena-rs:<version>, the version being
 # the UTC date + commit), so a rollback just starts the previous image again.
-# The last KEEP releases per implementation are kept; older images are pruned.
+# The last KEEP releases are kept; older images are pruned. (The Arena is Rust
+# only; the "rs" in the tag and in .release.env / .releases keeps the format the
+# deploy panel and earlier releases on a host already use.)
 #
 # Options (environment):
-#   ARENA_IMPL=py|rs        which Arena to run (default: whatever runs now, else py)
 #   ARENA_BRANCH=main       branch to release
 #   ARENA_SKIP_CI=1         deploy even if GitHub CI has not passed for the commit
 #   ARENA_CI_WAIT=300       seconds to wait for CI that is still running
 #   ARENA_SKIP_PULL=1       release the checkout as it is (used by the CI smoke test)
-#   ARENA_KEEP=3            releases to keep per implementation
+#   ARENA_KEEP=3            releases to keep
 #
-# A rollback restores code, not data: if the release ran a migration, the older
-# build meets a newer schema. Alembic migrations here only ever add, so that is
-# normally fine; the script says so when the schema moved.
+# A rollback restores code, not data: the Arena applies its migrations
+# (backend/migrations) at startup, and they only ever add, so an older build
+# carries on against a newer schema.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -58,14 +58,6 @@ write_state() {   # impl version
     echo "ARENA_IMPL=$impl"
     echo "ARENA_VERSION=$version"
     echo "ARENA_APP_IMAGE=claude-hq-arena-$impl:$version"
-    echo "ARENA_PY_IMAGE=claude-hq-arena-py:$version"
-    if [[ "$impl" == rs ]]; then
-      echo "ARENA_BUILD_CONTEXT=.."
-      echo "ARENA_DOCKERFILE=backend-rs/Dockerfile"
-    else
-      echo "ARENA_BUILD_CONTEXT=."
-      echo "ARENA_DOCKERFILE=Dockerfile"
-    fi
   } > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
 }
 
@@ -122,18 +114,17 @@ prune() {  # impl
 }
 
 cmd_check() {
-  say "Python unit tests (HQ)"
-  ( cd "$REPO" && python3 -m unittest discover -s tests -q ) && ok "HQ"
-  say "Arena backend tests (Python)"
-  ( cd "$BACKEND" && uv run pytest -q ) && ok "backend"
-  say "Arena backend tests (Rust) + clippy"
-  ( cd "$REPO/backend-rs" && cargo test --locked -q && cargo clippy --locked --all-targets -q -- -D warnings ) && ok "backend-rs"
+  say "Repo tests (frontend sync, ops)"
+  ( cd "$REPO" && python3 -m unittest discover -s tests -q ) && ok "tests"
+  say "Arena backend tests + clippy"
+  ( cd "$BACKEND" && cargo test --locked -q && cargo clippy --locked --all-targets -q -- -D warnings ) && ok "backend"
+  say "HQ server tests + clippy"
+  ( cd "$REPO/dashboard-rs" && cargo test --locked -q && cargo clippy --locked --all-targets -q -- -D warnings ) && ok "dashboard-rs"
   ok "all green: safe to merge"
 }
 
 cmd_deploy() {
-  local impl="${ARENA_IMPL:-$(current ARENA_IMPL)}"; impl="${impl:-py}"
-  [[ "$impl" == py || "$impl" == rs ]] || die "ARENA_IMPL must be py or rs"
+  local impl=rs
   local prev_version prev_impl
   prev_version=$(current ARENA_VERSION); prev_impl=$(current ARENA_IMPL)
 
@@ -173,11 +164,6 @@ cmd_deploy() {
   say "Building $impl $version"
   write_state "$impl" "$version"
   dc build app || { restore "$prev_impl" "$prev_version"; die "build failed"; }
-  if [[ "$impl" == rs ]]; then
-    dc --profile tools build migrate || { restore "$prev_impl" "$prev_version"; die "build failed (migrate image)"; }
-    say "Migrating the database (Alembic, Python image)"
-    dc --profile tools run --rm -T migrate || { restore "$prev_impl" "$prev_version"; die "migration failed"; }
-  fi
 
   say "Starting $impl $version"
   dc up -d --no-build app
@@ -214,8 +200,9 @@ cmd_rollback() {
   [[ -f "$HISTORY" ]] || die "no release history yet"
   local cur cur_impl prev
   cur=$(current ARENA_VERSION); cur_impl=$(current ARENA_IMPL)
-  # the newest release that is not the one running (same version, other impl counts)
-  prev=$(awk -v cur="$cur" -v ci="$cur_impl" '!($2 == cur && $3 == ci) && $5 != "rollback"' "$HISTORY" | tail -1)
+  # the newest Rust release that is not the one running (Python entries from
+  # before the Arena was Rust-only have no image to go back to)
+  prev=$(awk -v cur="$cur" -v ci="$cur_impl" '$3 == "rs" && !($2 == cur && $3 == ci) && $5 != "rollback"' "$HISTORY" | tail -1)
   [[ -n "$prev" ]] || die "no earlier release to roll back to"
   restore "$(awk '{print $3}' <<<"$prev")" "$(awk '{print $2}' <<<"$prev")"
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $(awk '{print $2, $3, $4}' <<<"$prev") rollback" >> "$HISTORY"

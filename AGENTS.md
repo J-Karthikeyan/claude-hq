@@ -3,7 +3,7 @@
 Guidance for anyone (human or AI agent) making changes here. **Read [`CONTRIBUTING.md`](./CONTRIBUTING.md) in full before your first change** — this file is only the fast path to it.
 
 ## What this is
-A **local-first, privacy-sensitive** dashboard that reads your own Claude Code sessions and renders them as a live command center with a creature-collection game layer. Two files do the work: `dashboard.py` (stdlib-only HTTP server on `127.0.0.1`) and `index.html` + `ui/` (frontend template; CSS and script split by area in `ui/`, stitched into one page by `assemble_index()`). `arena.py` is the opt-in multiplayer client.
+A **local-first, privacy-sensitive** dashboard that reads your own Claude Code sessions and renders them as a live command center with a creature-collection game layer. Two parts do the work: `dashboard-rs/` (`claudehq`, the Rust HQ server on `127.0.0.1`, also the opt-in multiplayer client) and `index.html` + `ui/` (frontend template; CSS and script split by area in `ui/`, stitched into one page by the server).
 
 ## Non-negotiable invariants (a PR violating one will not merge)
 1. **No build step.** No npm/bundler/transpiler; no TypeScript/JSX/SCSS; no external JS/CSS libraries (one narrow, documented exception: games/vendor/ holds vendored MIT three.js (r186, unminified, only its import paths rewritten, reproducible with tools/vendor_three.py) used by the 3D games; it is served only from 127.0.0.1, loaded lazily, never fetched from a third party at runtime; see CONTRIBUTING.md). Plain `.html`/`.css`/`.js` served as-is. Backend is Python **stdlib only** — no `pip install`, ever.
@@ -12,10 +12,10 @@ A **local-first, privacy-sensitive** dashboard that reads your own Claude Code s
 4. **IP rule.** Only original art (generated `monsterSVG`, original Village `troopSVG`, MIT Lucide icons/thinking-orbs) or **pre-existing runtime hotlinks** (never bundled). **Third-party models, textures and sounds may be vendored** when their license allows redistribution (e.g. Kenney's CC0 kits in `games/golf/`, `games/kart/`): each game's folder ships the license text alongside, files are served only from 127.0.0.1 and never hotlinked at runtime, and the PR names the source. **No new copyrighted characters/assets/names — specifically no Supercell / Clash assets, characters, or names.** Invent your own.
 5. **Backend security.** Bind `127.0.0.1` only; `_host_ok()` gate on every request; mutations are POST + CSRF (`X-HQ-Token`) + same-site Origin check; validate every path/id against an allowlist (no traversal). Reads GET, mutations POST.
 
-## The Arena backend is Rust (`backend-rs/`)
-The multiplayer Arena runs on the **Rust** server in `backend-rs/` (axum + sqlx; it owns the schema through `backend-rs/migrations/`). **Every Arena backend change goes there**: new routes, game engines (`backend-rs/src/valley/`), room/socket behaviour, results, schema. `backend/` (Python/FastAPI) is frozen: it is the rollback target for `ops/release.sh rollback` and nothing else. Do not add features to it; do not "port back". The local server `dashboard.py` / `arena.py` (the HQ app on your machine) is unchanged by this and stays Python stdlib.
-- Before a PR: `cd backend-rs && cargo test && cargo clippy --locked --all-targets -- -D warnings`; for socket changes also `uv run python backend/scripts/socket_parity.py`.
-- Deploy: `ops/release.sh deploy` (keeps the running impl, now `rs`); `ARENA_IMPL=rs ops/release.sh check` to try a build first.
+## The Arena backend is Rust (`backend/`)
+The multiplayer Arena runs on the **Rust** server in `backend/` (axum + sqlx; it owns the schema through `backend/migrations/`, applied at startup). **Every Arena backend change goes there**: new routes, game engines (`backend/src/valley/`), room/socket behaviour, results, schema. Game data the server embeds lives in `backend/data/` and must stay byte-identical to its `games/` copy (`tests/test_game_data_sync.py`). The local HQ server is Rust too: `dashboard-rs/` (`claudehq`, the HQ app on your machine).
+- Before a PR: `ops/release.sh check` (repo tests, then `cargo test` + clippy in `backend/` and `dashboard-rs/`); for UI changes also `python3 tools/ui_smoke.py`. CI runs the same plus the deploy image build.
+- Deploy: `ops/release.sh deploy` on the Arena host (waits for CI, builds `backend/`'s image, health-checks, rolls back on failure).
 
 ## House style (match it, don't "modernize")
 - `var`, function-scoped. Defensive guards on every helper (`cr = cr || {}`, `|0`, `Math.max/Math.min`, `!=null ? x : fallback`).
@@ -30,7 +30,7 @@ The multiplayer Arena runs on the **Rust** server in `backend-rs/` (axum + sqlx;
 ## Before you open a PR
 - `python3 -m unittest discover -s tests -v` (green; add tests for backend logic you change).
 - Manually verify the changed view across themes, Calm on, Large-text on, keyboard-only, and blocked-CDN (sprites fall back to generated SVG). No console errors. No un-`esc()`'d interpolation in the diff.
-- Bump `APP_VERSION` in `dashboard.py` + add a README Changelog entry for user-facing changes. Call out anything touching privacy / egress / security / third-party assets explicitly.
+- Bump `APP_VERSION` in `dashboard-rs/src/app.rs` + add a README Changelog entry for user-facing changes. Call out anything touching privacy / egress / security / third-party assets explicitly.
 
 ## Sprite roster (reference)
 The `pokemon`/`pokemon3d`/`aniimo` packs hotlink pre-existing public sprite libraries at runtime; `monsters` and `village` are 100% locally-generated SVG (zero network). Every hotlink must degrade to `monsterSVG` via the `onerror` chain — a sprite with no fallback is a bug.

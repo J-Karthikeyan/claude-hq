@@ -1,9 +1,9 @@
 """Bowling: the browser and the Rust Arena must roll every ball and score every card identically.
 
 games/bowling.js carries the integer physics and the scoring between the BOWL-SIM markers,
-mirrored from backend-rs/src/valley/bowling.rs (golf's VS and TICK come from golf.rs). This
+mirrored from backend/src/valley/bowling.rs (golf's VS and TICK come from golf.rs). This
 checks the constants match and, when node is available, replays every golden roll and
-scoring fixture in backend-rs/tests/bowl_golden.json (written by the Rust test
+scoring fixture in backend/tests/bowl_golden.json (written by the Rust test
 `regenerate_bowl_golden`) through the JS block. Stdlib only."""
 import json
 import os
@@ -14,9 +14,9 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BOWL_JS = os.path.join(ROOT, "games", "bowling.js")
-BOWL_RS = os.path.join(ROOT, "backend-rs", "src", "valley", "bowling.rs")
-GOLF_RS = os.path.join(ROOT, "backend-rs", "src", "valley", "golf.rs")
-GOLDEN = os.path.join(ROOT, "backend-rs", "tests", "bowl_golden.json")
+BOWL_RS = os.path.join(ROOT, "backend", "src", "valley", "bowling.rs")
+GOLF_RS = os.path.join(ROOT, "backend", "src", "valley", "golf.rs")
+GOLDEN = os.path.join(ROOT, "backend", "tests", "bowl_golden.json")
 CONSTS = ("HALF_W", "BR", "PR", "HEAD_Z", "PIN_DX", "ROW_DZ", "PIT_Z", "V_MIN", "V_MAX", "AIM_MAX", "AIM_DIV",
           "SPIN_MAX", "HOOK", "OIL_DIV", "BALL_DRAG", "V_STALL", "BALL_M", "PIN_M", "EN", "ED", "PIN_DRAG",
           "PIN_STOP", "FALL_R", "PIN_TIP", "MAX_TICKS", "SAMPLE")
