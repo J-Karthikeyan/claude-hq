@@ -159,6 +159,37 @@ function create(THREE, canvas, opts){
     else if(sid === 6) c = pal.loose; else if(sid === 1) c = pal.loose; else c = 0x6a6d70;
     return c;
   }
+  // seeded value noise (0..1) for colour variation across the land
+  function makeNoise(seed){
+    var r = mulberry32(seed), val = new Float32Array(256), perm = new Uint16Array(512), i;
+    for(i = 0; i < 256; i++){ perm[i] = i; val[i] = r(); }
+    for(i = 255; i > 0; i--){ var j = Math.floor(r()*(i + 1)), t = perm[i]; perm[i] = perm[j]; perm[j] = t; }
+    for(i = 0; i < 256; i++) perm[i + 256] = perm[i];
+    function v(ix, iz){ return val[perm[(ix & 255) + perm[iz & 255]]]; }
+    return function(x, z){
+      var ix = Math.floor(x), iz = Math.floor(z), fx = x - ix, fz = z - iz, u = fx*fx*(3 - 2*fx), w = fz*fz*(3 - 2*fz);
+      var A = v(ix, iz), B = v(ix + 1, iz), C2 = v(ix, iz + 1), D = v(ix + 1, iz + 1);
+      return A + (B - A)*u + (C2 - A)*w + (A - B - C2 + D)*u*w;
+    };
+  }
+  var GC = [new THREE.Color(), new THREE.Color(), new THREE.Color()], TC = new THREE.Color();
+  // The land's colour at a grid point: the three greens blended in seeded clumps, a fine
+  // speckle, darker in dips and a touch lighter on crests (from the heightfield itself).
+  function landColor(st, pal, k, gi, gj, out){
+    var G = st.grid, nx = G.nx, nz = G.nz, x = G.x0 + gi*G.cell, z = G.z0 + gj*G.cell, sid = G.surf[k];
+    var n1 = R.noiseA(x/42, z/42), n2 = R.noiseB(x/7, z/7);
+    if(sid === 3){
+      GC[0].setHex(pal.grass[0]); GC[1].setHex(pal.grass[1]); GC[2].setHex(pal.grass[2]);
+      var t3 = n1*2;
+      if(t3 < 1) out.copy(GC[2]).lerp(GC[0], t3); else out.copy(GC[0]).lerp(GC[1], t3 - 1);
+    } else out.setHex(surfColor(pal, sid, x, z, n1));
+    // curvature over +-2 cells: a dip (land below its surroundings) is darker
+    var d = 2, i0 = Math.max(0, gi - d), i1 = Math.min(nx - 1, gi + d), j0 = Math.max(0, gj - d), j1 = Math.min(nz - 1, gj + d);
+    var avg = (G.h[gj*nx + i0] + G.h[gj*nx + i1] + G.h[j0*nx + gi] + G.h[j1*nx + gi])/4, cv = avg - G.h[k];
+    var shade = 1 - Math.max(0, Math.min(0.24, cv*0.32)) + Math.max(0, Math.min(0.06, -cv*0.08));
+    out.multiplyScalar(shade*(0.93 + n2*0.12));
+    return out;
+  }
   function buildChunk(st, pal, cx, cz, step){
     var G = st.grid, x0 = G.x0, z0 = G.z0, cell = G.cell, nx = G.nx, nz = G.nz;
     var i0 = cx*CH, j0 = cz*CH, i1 = Math.min(nx - 1, i0 + CH), j1 = Math.min(nz - 1, j0 + CH);
@@ -166,27 +197,26 @@ function create(THREE, canvas, opts){
     if(cols < 2 || rows < 2) return null;
     var tris = (cols - 1)*(rows - 1)*2, pos = new Float32Array(tris*9), col = new Float32Array(tris*9), o = 0;
     var vx = [], vy = [], vz = [], vc = [];
-    var rng = mulberry32(hashStr(st.seed + "|t|" + cx + "," + cz));
     for(var r = 0; r < rows; r++) for(var c = 0; c < cols; c++){
       var gi = Math.min(i1, i0 + c*step), gj = Math.min(j1, j0 + r*step), k = gj*nx + gi;
-      var x = x0 + gi*cell, z = z0 + gj*cell;
-      vx.push(x); vy.push(G.h[k]); vz.push(z);
-      var sid = G.surf[k], nz2 = ((hashStr(gi + ":" + gj) % 1000)/1000);
-      COL.setHex(surfColor(pal, sid, x, z, nz2));
-      var j2 = 0.94 + nz2*0.1; COL.multiplyScalar(j2);
-      vc.push(COL.r, COL.g, COL.b);
+      vx.push(x0 + gi*cell); vy.push(G.h[k]); vz.push(z0 + gj*cell);
+      landColor(st, pal, k, gi, gj, TC);
+      vc.push(TC.r, TC.g, TC.b);
     }
     function V(c, r){ return r*cols + c; }
     for(var rr = 0; rr < rows - 1; rr++) for(var cc = 0; cc < cols - 1; cc++){
       var a = V(cc, rr), b = V(cc + 1, rr), d = V(cc, rr + 1), e = V(cc + 1, rr + 1);
       var quad = (cc + rr) % 2 === 0 ? [a, d, b, b, d, e] : [a, d, e, a, e, b];
-      for(var t = 0; t < 6; t++){
-        var vi = quad[t];
-        pos[o] = vx[vi]; pos[o+1] = vy[vi]; pos[o+2] = vz[vi];
-        // flat shading per triangle: colour of the triangle's first vertex keeps facets crisp
-        var fv = quad[t - (t % 3)];
-        col[o] = vc[fv*3]; col[o+1] = vc[fv*3+1]; col[o+2] = vc[fv*3+2];
-        o += 3;
+      for(var tri = 0; tri < 2; tri++){
+        // flat shading per face: the face's mean colour with a small seeded jitter
+        var q0 = quad[tri*3], q1 = quad[tri*3 + 1], q2 = quad[tri*3 + 2];
+        var jit = 0.965 + ((hashStr((i0 + cc*step) + ":" + (j0 + rr*step) + ":" + tri) % 1000)/1000)*0.07;
+        var fr = (vc[q0*3] + vc[q1*3] + vc[q2*3])/3*jit, fg = (vc[q0*3+1] + vc[q1*3+1] + vc[q2*3+1])/3*jit, fb = (vc[q0*3+2] + vc[q1*3+2] + vc[q2*3+2])/3*jit;
+        [q0, q1, q2].forEach(function(vi){
+          pos[o] = vx[vi]; pos[o+1] = vy[vi]; pos[o+2] = vz[vi];
+          col[o] = fr; col[o+1] = fg; col[o+2] = fb;
+          o += 3;
+        });
       }
     }
     var g = new THREE.BufferGeometry();
@@ -241,71 +271,93 @@ function create(THREE, canvas, opts){
 
   /* ---------- the road ribbon ---------- */
   var ROAD_COLS = [-1.75, -1, -0.62, -0.22, 0, 0.22, 0.62, 1, 1.75];   // across, in road half-widths (the outer pair is the shoulder)
-  function roadTexture(sid, seed){
+  // The road texture, across the ribbon (u: 0 = left shoulder edge, 1 = right): the shoulder
+  // blending into the verge, loose gravel at the road's edges and on the crown, and two darker,
+  // packed wheel tracks where cars run. Drawn once per surface, seeded, tiled along the road.
+  function roadTexture(sid, seed, edgeHex, roadHalf){
     var rng = mulberry32(hashStr("road|" + sid + "|" + seed));
     return canvasTex(256, 512, function(g, w, h){
-      var base = ROAD_COL[sid];
+      var base = ROAD_COL[sid], span = roadHalf*3.5;
+      function U(lat){ return (0.5 + lat/span)*w; }
+      var edgeL = U(-roadHalf), edgeR = U(roadHalf);
       g.fillStyle = hexCss(base); g.fillRect(0, 0, w, h);
-      var spk = sid === 0 ? 2600 : 4200;
+      // the verge colour creeping in over the outer shoulder
+      var gl = g.createLinearGradient(0, 0, edgeL, 0);
+      gl.addColorStop(0, hexCss(edgeHex)); gl.addColorStop(0.45, hexCss(edgeHex)); gl.addColorStop(1, "rgba(0,0,0,0)");
+      if(sid !== 0){ g.globalAlpha = 0.85; g.fillStyle = gl; g.fillRect(0, 0, edgeL, h); }
+      var gr2 = g.createLinearGradient(w, 0, edgeR, 0);
+      gr2.addColorStop(0, hexCss(edgeHex)); gr2.addColorStop(0.45, hexCss(edgeHex)); gr2.addColorStop(1, "rgba(0,0,0,0)");
+      if(sid !== 0){ g.fillStyle = gr2; g.fillRect(edgeR, 0, w - edgeR, h); }
+      g.globalAlpha = 1;
+      // loose, lighter material at the road's edges and along the crown
+      function band(cx, half, color, alpha){
+        var gg = g.createLinearGradient(cx - half, 0, cx + half, 0);
+        gg.addColorStop(0, "rgba(0,0,0,0)"); gg.addColorStop(0.5, color); gg.addColorStop(1, "rgba(0,0,0,0)");
+        g.globalAlpha = alpha; g.fillStyle = gg; g.fillRect(cx - half, 0, half*2, h); g.globalAlpha = 1;
+      }
+      var light = shade(base, sid === 5 ? 1.08 : 1.22), dark = shade(base, sid === 5 ? 0.78 : 0.62);
+      if(sid !== 0){
+        band(edgeL + 10, 16, light, 0.75); band(edgeR - 10, 16, light, 0.75);
+        band(w/2, 9, light, 0.6);
+      }
+      // speckle: small stones, light and dark
+      var spk = sid === 0 ? 2600 : 5200;
       for(var i = 0; i < spk; i++){
-        var x = rng()*w, y = rng()*h, r = sid === 0 ? 1 : 0.8 + rng()*1.6;
-        g.fillStyle = shade(base, sid === 5 ? 0.9 + rng()*0.12 : 0.72 + rng()*0.5); g.globalAlpha = 0.55 + rng()*0.4;
+        var x = rng()*w, y = rng()*h, r = sid === 0 ? 1 : 0.8 + rng()*1.8;
+        g.fillStyle = shade(base, sid === 5 ? 0.9 + rng()*0.15 : 0.7 + rng()*0.65); g.globalAlpha = 0.5 + rng()*0.45;
         g.fillRect(x, y, r, r);
       }
       g.globalAlpha = 1;
-      // shoulders: the outer 0.75/3.5 of each side is loose material
-      var sh = Math.round(w*(0.75/3.5)*0.5);
-      if(sid !== 0 && sid !== 5){
-        g.fillStyle = "rgba(255,240,215,0.14)"; g.fillRect(0, 0, sh, h); g.fillRect(w - sh, 0, sh, h);
-      }
-      // tyre ruts: darker, smoother bands where the wheels run (lat +-0.78 m)
-      [0.39, 0.61].forEach(function(u){
-        var cx = u*w, gr = g.createLinearGradient(cx - 18, 0, cx + 18, 0);
-        var dark = sid === 5 ? "rgba(110,130,155,0.6)" : sid === 0 ? "rgba(0,0,0,0.18)" : "rgba(60,40,25,0.32)";
-        gr.addColorStop(0, "rgba(0,0,0,0)"); gr.addColorStop(0.5, dark); gr.addColorStop(1, "rgba(0,0,0,0)");
-        g.fillStyle = gr; g.fillRect(cx - 18, 0, 36, h);
+      // the wheel tracks: two packed, darker bands (+-0.78 m), smoother than the gravel around them
+      [U(-0.78), U(0.78)].forEach(function(cx){
+        band(cx, 13, dark, sid === 0 ? 0.35 : 0.85);
+        band(cx, 6, shade(base, sid === 5 ? 0.7 : 0.55), sid === 0 ? 0.2 : 0.55);
       });
+      // a second, fainter pair from wider cars
+      if(sid !== 0) [U(-1.45), U(1.45)].forEach(function(cx){ band(cx, 9, dark, 0.3); });
       if(sid === 0){
-        g.fillStyle = "rgba(240,240,232,0.92)"; g.fillRect(sh + 4, 0, 4, h); g.fillRect(w - sh - 8, 0, 4, h);
+        g.fillStyle = "rgba(240,240,232,0.92)"; g.fillRect(edgeL + 4, 0, 4, h); g.fillRect(edgeR - 8, 0, 4, h);
         g.fillStyle = "rgba(245,220,120,0.9)"; for(var y2 = 0; y2 < h; y2 += 128) g.fillRect(w/2 - 2, y2, 4, 64);
       } else {
-        // loose stones along the crown and the edges
-        for(var k = 0; k < 900; k++){
-          var ux = rng() < 0.5 ? (0.5 + (rng() - 0.5)*0.08) : (rng() < 0.5 ? rng()*0.24 : 1 - rng()*0.24);
-          g.fillStyle = shade(base, 0.6 + rng()*0.7); g.fillRect(ux*w, rng()*h, 1.5 + rng()*2, 1.5 + rng()*2);
+        // a scatter of bigger stones on the loose parts
+        for(var k = 0; k < 700; k++){
+          var ux = rng() < 0.35 ? w/2 + (rng() - 0.5)*18 : (rng() < 0.5 ? edgeL + (rng() - 0.3)*40 : edgeR - (rng() - 0.3)*40);
+          g.fillStyle = shade(base, 0.75 + rng()*0.7); g.fillRect(ux, rng()*h, 1.5 + rng()*2.5, 1.5 + rng()*2);
         }
       }
     }, true);
   }
-  function buildRoad(st){
+  function buildRoad(st, pal){
     var pts = st.pts, n = pts.length, W = st.roadHalf, groups = {};
-    var shoulderLat = W*1.75;
+    var edgeHex = st.biome === "snow" ? pal.snow : pal.grass[1];
     for(var i = 0; i < n - 1; i++){
-      var sid = pts[i].surf, G = groups[sid] || (groups[sid] = {pos: [], uv: [], idx: [], rows: 0, last: -2});
-      if(G.last !== i){
-        // start a new strip row (first row, or after another surface's stretch)
-        addRow(G, pts[i]); G.rowsStart = G.rows - 1;
-      }
-      addRow(G, pts[i + 1]);
+      var sid = pts[i].surf, G = groups[sid] || (groups[sid] = {pos: [], uv: [], col: [], idx: [], rows: 0, last: -2});
+      if(G.last !== i) addRow(G, pts[i], i);
+      addRow(G, pts[i + 1], i + 1);
       var a = (G.rows - 2)*ROAD_COLS.length, b = (G.rows - 1)*ROAD_COLS.length;
-      for(var c = 0; c < ROAD_COLS.length - 1; c++) G.idx.push(a + c, b + c, a + c + 1, a + c + 1, b + c, b + c + 1);
+      // (wound so the faces point up: forward x right is down)
+      for(var c = 0; c < ROAD_COLS.length - 1; c++) G.idx.push(a + c, a + c + 1, b + c, a + c + 1, b + c + 1, b + c);
       G.last = i + 1;
     }
-    function addRow(G, P){
+    function addRow(G, P, pi){
       var nx = Math.cos(P.h), nz = Math.sin(P.h);
       for(var c = 0; c < ROAD_COLS.length; c++){
         var lat = ROAD_COLS[c]*W, x = P.x + nx*lat, z = P.z + nz*lat;
-        var y = st.env.height(x, z) + (Math.abs(ROAD_COLS[c]) > 1.2 ? 0.015 : 0.03);
+        var y = st.env.height(x, z) + (Math.abs(ROAD_COLS[c]) > 1.2 ? 0.02 : 0.03);
         G.pos.push(x, y, z);
         G.uv.push((ROAD_COLS[c] + 1.75)/3.5, P.s/9);
+        // subtle seeded per-vertex tone, so the strip is never one flat colour
+        var nv = (hashStr(pi + "|" + c + "|" + st.seed) % 1000)/1000, k = 0.9 + nv*0.16;
+        G.col.push(k, k, k*0.99);
       }
       G.rows++;
     }
     Object.keys(groups).forEach(function(k){
       var G = groups[k], g = new THREE.BufferGeometry();
-      g.setAttribute("position", new THREE.Float32BufferAttribute(G.pos, 3)); g.setAttribute("uv", new THREE.Float32BufferAttribute(G.uv, 2)); g.setIndex(G.idx);
+      g.setAttribute("position", new THREE.Float32BufferAttribute(G.pos, 3)); g.setAttribute("uv", new THREE.Float32BufferAttribute(G.uv, 2));
+      g.setAttribute("color", new THREE.Float32BufferAttribute(G.col, 3)); g.setIndex(G.idx);
       g.computeVertexNormals(); g.computeBoundingSphere();
-      var mat = new THREE.MeshLambertMaterial({map: roadTexture(+k, st.seed), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2});
+      var mat = new THREE.MeshLambertMaterial({map: roadTexture(+k, st.seed, edgeHex, W), vertexColors: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2});
       var m = new THREE.Mesh(g, mat); m.receiveShadow = !low; m.matrixAutoUpdate = false; world.add(m); R.deco.push(m);
     });
   }
@@ -497,9 +549,10 @@ function create(THREE, canvas, opts){
     // a low sun for long soft shadows, from a seeded side of the stage
     var r = mulberry32(hashStr("sun|" + st.seed)), az = r()*Math.PI*2, el = st.night ? 0.6 : 0.42 + r()*0.18;
     sunDir.set(Math.cos(az)*Math.cos(el), Math.sin(el), Math.sin(az)*Math.cos(el));
+    R.noiseA = makeNoise(hashStr("landA|" + st.seed)); R.noiseB = makeNoise(hashStr("landB|" + st.seed));
     buildSky(st, pal);
     buildTerrain(st, pal);
-    buildRoad(st);
+    buildRoad(st, pal);
     buildScenery(st, pal);
     fxInit();
   };
@@ -721,12 +774,14 @@ function create(THREE, canvas, opts){
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
     var fc = scene.fog ? scene.fog.color : new THREE.Color(0xffffff);
     var mat = new THREE.ShaderMaterial({
-      uniforms: {uScale: {value: 400}, uFog: {value: new THREE.Vector3(fc.r, fc.g, fc.b)}, uFogNear: {value: scene.fog ? scene.fog.near : 100}, uFogFar: {value: scene.fog ? scene.fog.far : 500}},
+      uniforms: {uLight: {value: R.stage && R.stage.night ? 0.32 : 1}, uScale: {value: 400}, uFog: {value: new THREE.Vector3(fc.r, fc.g, fc.b)}, uFogNear: {value: scene.fog ? scene.fog.near : 100}, uFogFar: {value: scene.fog ? scene.fog.far : 500}},
       vertexShader: "attribute float aSize; attribute float aAlpha; attribute vec3 aColor; varying float vA; varying vec3 vC; varying float vD; uniform float uScale;" +
         "void main(){ vec4 mv = modelViewMatrix*vec4(position,1.0); vD = -mv.z; gl_PointSize = aSize*uScale/max(0.5,-mv.z); vA = aAlpha; vC = aColor; gl_Position = projectionMatrix*mv; }",
-      fragmentShader: "varying float vA; varying vec3 vC; varying float vD; uniform vec3 uFog; uniform float uFogNear; uniform float uFogFar;" +
-        "void main(){ vec2 d = gl_PointCoord - 0.5; float r = dot(d,d)*4.0; if(r > 1.0) discard; float a = vA*(1.0 - r)*(1.0 - r);" +
-        "float f = clamp((vD - uFogNear)/(uFogFar - uFogNear), 0.0, 1.0); gl_FragColor = vec4(mix(vC, uFog, f), a*(1.0 - f*0.6)); }",
+      // a soft round puff; colours are linear like the rest of the scene, converted for the screen
+      fragmentShader: "varying float vA; varying vec3 vC; varying float vD; uniform vec3 uFog; uniform float uFogNear; uniform float uFogFar; uniform float uLight;" +
+        "void main(){ vec2 d = gl_PointCoord - 0.5; float r = dot(d,d)*4.0; if(r > 1.0) discard; float a = vA*pow(1.0 - r, 1.6);" +
+        "float f = clamp((vD - uFogNear)/(uFogFar - uFogNear), 0.0, 1.0); gl_FragColor = vec4(mix(vC*uLight, uFog, f), a*(1.0 - f*0.6));" +
+        "\n#include <colorspace_fragment>\n}",
       transparent: true, depthWrite: false
     });
     var pts = new THREE.Points(g, mat); pts.frustumCulled = false; pts.renderOrder = 5; scene.add(pts);
@@ -756,40 +811,41 @@ function create(THREE, canvas, opts){
     var p = FX.list[FX.next]; FX.next = (FX.next + 1) % PMAX;
     p.x = x; p.y = y; p.z = z; p.vx = vx; p.vy = vy; p.vz = vz; p.s = size; p.gr = grow; p.life = life; p.max = life; p.c = color; p.a = alpha; p.grav = grav;
   }
-  var DUST = {1: 0xc9b38e, 2: 0xb28d64, 3: 0x8a7d5c, 4: 0x6b5236, 5: 0xf4f8fc, 6: 0xcdb894, 0: 0xb0b0b0};
+  // light, surface-tinted dust (tan on gravel and dirt, white on snow, brown on mud, pale smoke on tarmac)
+  var DUST = {1: 0xdcc8a2, 2: 0xcdab80, 3: 0xa8987a, 4: 0x8a6a48, 5: 0xf6f9fd, 6: 0xe0cca6, 0: 0xd6d6d6};
+  var CHIP = {1: 0xb39a76, 2: 0xa88a64, 3: 0x8c7a56, 4: 0x6e5236, 5: 0xffffff, 6: 0xb8a07c, 0: 0x999999};
   R.fx = function(car, dt, calmOn){
     if(!FX || !car || !car.wheels) return;
-    var tel = car.tel, spd = tel.speed, i;
-    var M2 = car.M, fwdx = -M2[2], fwdz = -M2[8];
+    var M2 = car.M, fwdx = -M2[2], fwdz = -M2[8], i;
     for(i = 0; i < 4; i++){
       var w = car.wheels[i];
       if(!w.contact) { FX.tr.last[i] = null; continue; }
       var sid = w.surf, loose = sid !== 0;
       var slip = Math.min(3, w.slip || 0), wheelSpeed = Math.abs(w.omega*car.spec.radius), ground = Math.abs(w.vx) + Math.abs(w.vy);
-      // dust: loose surfaces always throw some; slip throws a lot
-      var amount = (loose ? 0.35*Math.min(1, ground/16) : 0) + Math.max(0, slip - 1)*0.5 + (loose ? Math.abs(wheelSpeed - Math.abs(w.vx))*0.06 : 0);
+      // dust: loose surfaces always lift some behind a moving car; sliding or spinning lifts a lot
+      var amount = (loose ? 0.3*Math.min(1, ground/16) : 0) + Math.max(0, slip - 1)*0.45 + (loose ? Math.min(1.5, Math.abs(wheelSpeed - Math.abs(w.vx))*0.06) : 0);
       if(sid === 0 && slip < 1.3) amount = 0;
       if(sid === 3) amount *= 0.35;                 // grass throws clods, not clouds
       if(calmOn) amount *= 0.4;
-      var n2 = amount*dt*(low ? 30 : 70);
+      var n2 = amount*dt*(low ? 26 : 60);
       while(n2 > 0){
         if(n2 < 1 && fxr() > n2) break;
         n2 -= 1;
-        var c = DUST[sid] || 0xbbbbbb, big = sid === 5 ? 1.3 : 1;
-        emit(w.cp[0] + (fxr() - 0.5)*0.4, w.cp[1] + 0.15, w.cp[2] + (fxr() - 0.5)*0.4,
-             -fwdx*(1 + fxr()*2) + (fxr() - 0.5)*1.5, 0.6 + fxr()*1.4, -fwdz*(1 + fxr()*2) + (fxr() - 0.5)*1.5,
-             (0.8 + fxr()*0.8)*big, 2.0 + fxr()*1.4, 1.6 + fxr()*1.8, c, sid === 0 ? 0.35 : 0.46, -0.25);
-        // gravel chips / mud / snow lumps thrown back off a spinning or sliding wheel
-        if(loose && (slip > 1 || wheelSpeed > Math.abs(w.vx) + 2) && fxr() < 0.6){
-          var cc = sid === 4 ? 0x4e3a26 : sid === 5 ? 0xffffff : 0x6b5a45;
-          emit(w.cp[0], w.cp[1] + 0.1, w.cp[2], -fwdx*(3 + fxr()*5) + (fxr() - 0.5)*2, 1.2 + fxr()*2.5, -fwdz*(3 + fxr()*5) + (fxr() - 0.5)*2,
-               0.08 + fxr()*0.06, 0, 0.6 + fxr()*0.4, cc, 0.95, 9.8);
+        var big = sid === 5 ? 1.3 : sid === 4 ? 0.8 : 1;
+        // a billow: thrown back and up off the wheel, slowing quickly, growing as it drifts
+        emit(w.cp[0] + (fxr() - 0.5)*0.5, w.cp[1] + 0.2, w.cp[2] + (fxr() - 0.5)*0.5,
+             -fwdx*(1.5 + fxr()*2.5) + (fxr() - 0.5)*2, 0.5 + fxr()*1.2, -fwdz*(1.5 + fxr()*2.5) + (fxr() - 0.5)*2,
+             (1.0 + fxr()*0.8)*big, 2.6 + fxr()*1.8, 1.8 + fxr()*1.6, DUST[sid] || 0xd0c4b0, sid === 0 ? 0.3 : 0.38, -0.3);
+        // a few small, light chips (gravel, mud, snow) off a spinning or sliding wheel
+        if(loose && sid !== 3 && (slip > 1.2 || wheelSpeed > Math.abs(w.vx) + 3) && fxr() < 0.15){
+          emit(w.cp[0], w.cp[1] + 0.1, w.cp[2], -fwdx*(3 + fxr()*4) + (fxr() - 0.5)*2, 1.0 + fxr()*2, -fwdz*(3 + fxr()*4) + (fxr() - 0.5)*2,
+               0.04 + fxr()*0.03, 0, 0.25 + fxr()*0.15, CHIP[sid] || 0xa08c70, 0.85, 9.8);
         }
       }
       // tyre tracks: a quad every ~0.3 m of travel
-      var T = FX.tr, L = T.last[i], mark = loose ? 0.16 + Math.min(0.5, slip*0.18) : Math.max(0, slip - 1.1)*0.5;
+      var T = FX.tr, L = T.last[i], mark = loose ? 0.3 + Math.min(0.45, slip*0.2) : Math.max(0, slip - 1.1)*0.5;
       if(sid === 5) mark = 0.25 + Math.min(0.4, slip*0.15);
-      var px = w.cp[0], pz = w.cp[2], py = w.cp[1] + 0.035;
+      var px = w.cp[0], pz = w.cp[2], py = w.cp[1] + 0.05;
       if(L){
         var dx = px - L.x, dz = pz - L.z, d = Math.sqrt(dx*dx + dz*dz);
         if(d > 0.3){
@@ -800,11 +856,11 @@ function create(THREE, canvas, opts){
     }
   };
   function addTrack(A, B, a, sid){
-    var T = FX.tr, dx = B.x - A.x, dz = B.z - A.z, d = Math.sqrt(dx*dx + dz*dz) || 1, nx = -dz/d*0.11, nz = dx/d*0.11;
+    var T = FX.tr, dx = B.x - A.x, dz = B.z - A.z, d = Math.sqrt(dx*dx + dz*dz) || 1, nx = -dz/d*0.13, nz = dx/d*0.13;
     var pos = T.g.attributes.position.array, col = T.g.attributes.color.array, o = T.at*18, oc = T.at*24;
     var v = [[A.x - nx, A.y, A.z - nz], [B.x - nx, B.y, B.z - nz], [A.x + nx, A.y, A.z + nz], [A.x + nx, A.y, A.z + nz], [B.x - nx, B.y, B.z - nz], [B.x + nx, B.y, B.z + nz]];
-    var c = sid === 5 ? [0.62, 0.68, 0.76] : sid === 0 ? [0.08, 0.08, 0.09] : sid === 4 ? [0.24, 0.17, 0.1] : [0.36, 0.27, 0.18];
-    for(var k = 0; k < 6; k++){ pos[o + k*3] = v[k][0]; pos[o + k*3 + 1] = v[k][1]; pos[o + k*3 + 2] = v[k][2]; col[oc + k*4] = c[0]; col[oc + k*4 + 1] = c[1]; col[oc + k*4 + 2] = c[2]; col[oc + k*4 + 3] = Math.min(0.7, a); }
+    var c = sid === 5 ? [0.5, 0.56, 0.66] : sid === 0 ? [0.03, 0.03, 0.035] : sid === 4 ? [0.12, 0.08, 0.05] : [0.17, 0.12, 0.075];
+    for(var k = 0; k < 6; k++){ pos[o + k*3] = v[k][0]; pos[o + k*3 + 1] = v[k][1]; pos[o + k*3 + 2] = v[k][2]; col[oc + k*4] = c[0]; col[oc + k*4 + 1] = c[1]; col[oc + k*4 + 2] = c[2]; col[oc + k*4 + 3] = Math.min(0.75, a); }
     T.at = (T.at + 1) % T.max; T.count = Math.min(T.max, T.count + 1); T.dirty = true;
   }
   function fxUpdate(dt){
@@ -818,7 +874,7 @@ function create(THREE, canvas, opts){
       p.vy -= p.grav*dt; var drag = Math.exp(-dt*(p.grav > 1 ? 0.4 : 1.6)); p.vx *= drag; p.vz *= drag; if(p.grav <= 0) p.vy *= drag;
       p.x += p.vx*dt; p.y += p.vy*dt; p.z += p.vz*dt; p.s += p.gr*dt;
       var u = p.life/p.max;
-      pos[n*3] = p.x; pos[n*3+1] = p.y; pos[n*3+2] = p.z; size[n] = p.s; alpha[n] = p.a*Math.min(1, u*2.2)*(p.grav > 1 ? 1 : Math.min(1, (1 - u)*6 + 0.2));
+      pos[n*3] = p.x; pos[n*3+1] = p.y; pos[n*3+2] = p.z; size[n] = p.s; alpha[n] = p.grav > 1 ? p.a*Math.min(1, u*3) : p.a*Math.min(1, (1 - u)*7)*Math.min(1, u*u*(3 - 2*u)*1.6);
       COL.setHex(p.c); col[n*3] = COL.r; col[n*3+1] = COL.g; col[n*3+2] = COL.b;
       n++;
     }

@@ -68,7 +68,7 @@ var CARS = [
    engine: {idle: 900, redline: 7200, limiter: 7500, launch: 3800, inertia: 0.20, turbo: 0.35, brake: 55,
             curve: [[800, 150], [2000, 245], [3000, 355], [4000, 400], [5000, 398], [6000, 368], [7000, 320], [7600, 280]]},
    gears: [3.10, 2.12, 1.60, 1.28, 1.05, 0.88], reverse: 3.2, final: 4.85, eff: 0.88, shiftUp: 6900, shiftTime: 0.14,
-   split: 0.36, centre: [70, 0.12], frontDiff: [25, 0.08], rearDiff: [140, 0.45],
+   split: 0.36, activeRear: 0.26, centre: [30, 0.05], frontDiff: [25, 0.08], rearDiff: [140, 0.45],
    brake: 3900, bias: 0.78, hand: 2600, cda: 0.80, cla: 0.30, lock: 0.66, rcLift: 0.30, kyF: 1.0, kyR: 0.8,
    colors: {body: "#e9eef2", stripe: "#d94b3d", stripe2: "#2f5fb3", rim: "#d8d2c4", glass: "#1d2733"}},
   {id: "saltcedar", name: "Saltcedar 240R", kind: "RWD coupe", drive: "rwd", eng: "six", plate: "SALTCDR", note: "tail-happy: feather the throttle",
@@ -77,8 +77,8 @@ var CARS = [
    engine: {idle: 850, redline: 7800, limiter: 8100, launch: 3400, inertia: 0.18, turbo: 0, brake: 50,
             curve: [[800, 125], [2000, 170], [3000, 200], [4000, 218], [5000, 232], [6000, 236], [7000, 224], [8200, 196]]},
    gears: [3.30, 2.25, 1.68, 1.32, 1.08, 0.90], reverse: 3.4, final: 4.3, eff: 0.90, shiftUp: 7550, shiftTime: 0.15,
-   split: 0, centre: [0, 0], frontDiff: [0, 0], rearDiff: [100, 0.32],
-   brake: 3800, bias: 0.76, hand: 2100, cda: 0.74, cla: 0.22, lock: 0.68, rcLift: 0.30, kyF: 1.0, kyR: 0.78,
+   split: 0, centre: [0, 0], frontDiff: [0, 0], rearDiff: [40, 0.25],
+   brake: 3800, bias: 0.76, hand: 2100, cda: 0.74, cla: 0.22, lock: 0.68, rcLift: 0.30, kyF: 1.0, kyR: 0.72,
    colors: {body: "#2e6a4f", stripe: "#f2c641", stripe2: "#f4efe3", rim: "#c9ccd1", glass: "#1a2129"}},
   {id: "pipit", name: "Pipit Sprint 16", kind: "FWD hot hatch", drive: "fwd", eng: "four", plate: "PIPIT 16", note: "stable, pulls through corners",
    mass: 1060, inertia: [1450, 1600, 470], a: 0.98, b: 1.42, track: 1.46, hpY: 0.0, lfree: 0.32, travel: 0.23, radius: 0.305, wheelI: 1.0,
@@ -124,7 +124,7 @@ function create(spec, opts){
   opts = opts || {};
   var c = {spec: spec, p: [0, 0, 0], v: [0, 0, 0], q: [0, 0, 0, 1], w: [0, 0, 0], M: [1, 0, 0, 0, 1, 0, 0, 0, 1],
     wheels: [], gear: 1, pend: 0, shiftT: 0, since: 1, rpm: spec.engine.idle, boost: 0, locked: false, limiter: false,
-    revT: 0, steerIn: 0, delta: 0, t: 0, upsideT: 0, airT: 0, landing: 0, acc: 0, assist: opts.assist !== false,
+    revT: 0, steerIn: 0, delta: 0, t: 0, upsideT: 0, airT: 0, landing: 0, acc: 0, assist: opts.assist !== false, tc: !!opts.tc, tcCut: 1,
     prevP: [0, 0, 0], prevQ: [0, 0, 0, 1], hit: 0, hitT: 0,
     tel: {speed: 0, kmh: 0, rpm: 0, gear: 1, beta: 0, drift: false, slip: 0, rumble: 0, surface: 0, air: false, throttle: 0, brake: 0, steer: 0, hand: false}};
   var L = [[-1, 1], [1, 1], [-1, -1], [1, -1]];          // FL, FR, RL, RR (x sign, front?)
@@ -396,6 +396,19 @@ function step(c, ctl, env, dt){
   for(i = 0; i < 4; i++){ c.wheels[i].Fx = 0; c.wheels[i].Fy = 0; c.wheels[i].slip = 0; }
   // hill hold: a stopped car with no throttle keeps its brakes on until you drive off
   c.parked = !hold && thr < 0.05 && (c.parked || Math.abs(vFwd) < 0.3);
+  // Traction control (optional, off unless asked for): watch the driven wheels' slip ratio
+  // against the surface's peak and trim engine torque while they spin past it.
+  if(c.tc && thr > 0.05 && c.gear !== 0){
+    var over = 0;
+    c.wheels.forEach(function(wh){
+      if(wh.share <= 0 || !wh.contact) return;
+      var pk = SURFACES[wh.surf].kx, k = c.gear < 0 ? -wh.kappa : wh.kappa;
+      over = Math.max(over, (k - pk*0.5)/pk);
+    });
+    if(over > 0) c.tcCut = Math.max(0.15, c.tcCut - dt*(2 + over*10));
+    else c.tcCut = Math.min(1, c.tcCut + dt*2.5);
+  } else c.tcCut = 1;
+  c.tel.tc = c.tcCut < 0.98;
   var openClutch = c.shiftT > 0 || c.gear === 0 || (hand > 0.3 && s.drive === "rwd");
   for(var sub = 0; sub < SUB; sub++){
     // engine and clutch
@@ -412,7 +425,8 @@ function step(c, ctl, env, dt){
       var lockRpm = thr > 0.05 ? e.idle + thr*(e.launch - e.idle) : e.idle*1.15;
       if(wheelRpm >= lockRpm - 40 && wheelRpm > e.idle*0.95){
         c.rpm = wheelRpm; c.locked = true;
-        Tout = engineTorque(c, c.rpm, thr)*ratio*s.eff;
+        var Te = engineTorque(c, c.rpm, thr); if(Te > 0) Te *= c.tcCut;
+        Tout = Te*ratio*s.eff;
         refl = e.inertia*ratio*ratio;
       } else {
         c.locked = false;
@@ -421,7 +435,7 @@ function step(c, ctl, env, dt){
         if(thr > 0.02){
           // the clutch slips at launch: it passes the engine's torque at its own rpm
           var engage = clamp((c.rpm - e.idle)/(e.launch - e.idle + 1), 0.15, 1);
-          Tout = Math.max(0, engineTorque(c, c.rpm, thr))*engage*ratio*s.eff;
+          Tout = Math.max(0, engineTorque(c, c.rpm, thr))*c.tcCut*engage*ratio*s.eff;
         }
       }
     }
@@ -431,7 +445,10 @@ function step(c, ctl, env, dt){
     if(s.drive === "awd"){
       if(hand > 0.3){ Tf = Tout; Tr = 0; }
       else {
-        Tf = Tout*s.split; Tr = Tout*(1 - s.split);
+        // an active centre: in a slide under power (and just after a handbrake turn) it sends
+        // more to the rear, as rally AWD centres do, so a drift can be held on the throttle
+        var sp = s.split - (s.activeRear || 0)*clamp(Math.max((Math.abs(beta) - 0.15)/0.2, 1 - (c.sinceHB || 9)/1.5), 0, 1)*thr;
+        Tf = Tout*sp; Tr = Tout*(1 - sp);
         var omF = (c.wheels[0].omega + c.wheels[1].omega)/2, omR = (c.wheels[2].omega + c.wheels[3].omega)/2;
         var capC = s.centre[0] + s.centre[1]*Math.abs(Tout), xc = capC*Math.tanh((omF - omR)/2.5);
         Tf -= xc; Tr += xc;

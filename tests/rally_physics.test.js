@@ -178,20 +178,40 @@ function run(){
     });
   });
 
-  test("a steady power drift on gravel holds with countersteer for >= 2 s (RWD, assist on)", function(){
-    var d = scenarios.drift(P.CARS[1], "gravel", {assist: true});
-    ok(d.held >= 2, P.CARS[1].name + ": held " + d.held.toFixed(2) + " s (max beta " + d.maxBeta.toFixed(0) + ")");
+  test("a steady power drift on gravel holds with countersteer for >= 2 s (assist on: AWD and RWD)", function(){
+    [P.CARS[0], P.CARS[1]].forEach(function(spec){
+      var d = scenarios.drift(spec, "gravel", {assist: true});
+      ok(d.held >= 2, spec.name + ": held " + d.held.toFixed(2) + " s (max beta " + d.maxBeta.toFixed(0) + ")");
+    });
   });
-  test("a Scandinavian flick puts the AWD into a 4-wheel drift past 18 degrees (assist on)", function(){
-    // the AWD pulls itself straight on the power; it holds flatter angles with handbrake dabs
-    var d = scenarios.drift(P.CARS[0], "gravel", {assist: true, v: 14});
-    ok(d.maxBeta >= 18 && d.held >= 1.2, P.CARS[0].name + ": max beta " + d.maxBeta.toFixed(0) + ", held " + d.held.toFixed(2) + " s");
-  });
-  test("a gravel drift holds with the driver's own countersteer (no assist: RWD)", function(){
-    [P.CARS[1]].forEach(function(spec){
+  test("a gravel drift holds with the driver's own countersteer (no assist: AWD and RWD)", function(){
+    [P.CARS[0], P.CARS[1]].forEach(function(spec){
       var d = scenarios.drift(spec, "gravel", {assist: false});
       ok(d.held >= 2, spec.name + ": held " + d.held.toFixed(2) + " s (max beta " + d.maxBeta.toFixed(0) + ")");
     });
+  });
+  test("a Scandinavian flick puts the AWD past 18 degrees of slide (assist on)", function(){
+    var d = scenarios.drift(P.CARS[0], "gravel", {assist: true, v: 14});
+    ok(d.maxBeta >= 18, P.CARS[0].name + ": max beta " + d.maxBeta.toFixed(0));
+  });
+  test("traction control holds the driven wheels near their grip; off, the physics is untouched", function(){
+    P.CARS.forEach(function(spec){
+      ["gravel", "snow"].forEach(function(sf){
+        var env = flat(sf), on = P.place(P.create(spec, {tc: true}), 0, 0, 0, env), off = P.place(P.create(spec), 0, 0, 0, env), kOn = 0, kOff = 0;
+        for(var t = 0; t < 6; t += DT){
+          P.step(on, {throttle: 1}, env, DT); P.step(off, {throttle: 1}, env, DT);
+          if(t > 1) on.wheels.forEach(function(w){ if(w.share > 0) kOn = Math.max(kOn, w.kappa); });
+          if(t > 1) off.wheels.forEach(function(w){ if(w.share > 0) kOff = Math.max(kOff, w.kappa); });
+        }
+        var pk = P.SURFACES[P.SURF_INDEX[sf]].kx;
+        ok(kOn < pk*1.6, spec.name + " " + sf + ": slip with TC " + kOn.toFixed(2));
+        ok(on.tel.speed > 8, spec.name + " " + sf + ": TC car only reached " + on.tel.speed.toFixed(1) + " m/s");
+      });
+    });
+    // TC off by default: two identical cars, one with tc:false explicitly, stay identical
+    var env2 = hills(), a = P.place(P.create(1), 0, 0, 0, env2), b = P.place(P.create(1, {tc: false}), 0, 0, 0, env2);
+    for(var i = 0; i < 1200; i++){ P.step(a, {throttle: 1, steer: Math.sin(i/90)}, env2, DT); P.step(b, {throttle: 1, steer: Math.sin(i/90)}, env2, DT); }
+    ok(P.snapshot(a) === P.snapshot(b), "tc:false changed the physics");
   });
 
   test("no NaN or explosion over 10 minutes of random inputs on hilly terrain", function(){

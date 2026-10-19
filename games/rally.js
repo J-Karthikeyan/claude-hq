@@ -250,6 +250,9 @@ function makeGame(host, opts){
     V.event = {seed: seed, list: list, index: 0, times: []};
     startSolo(list[0]);
   }
+  function tcMode(){ var m = opt("tc", "auto"); return m === "on" || m === "off" ? m : "auto"; }
+  // TC on for keys by default (all-or-nothing throttle), off for a gamepad's trigger
+  function tcWanted(){ var m = tcMode(); return m === "on" || (m === "auto" && V.lastDev !== "pad"); }
   function settingsDialog(where){
     var box = api.mk("div", "vg-rally-settings"); box.setAttribute("role", "group"); box.setAttribute("aria-label", "Rally settings");
     function check(label, val, fn){
@@ -258,6 +261,13 @@ function makeGame(host, opts){
       l.appendChild(cb); l.appendChild(document.createTextNode(" " + label)); box.appendChild(l); return cb;
     }
     check("Countersteer + stability assist (recommended on a keyboard)", V.assist, function(v){ V.assist = v; setOpt("assist", v); if(V.car) V.car.assist = v; });
+    // traction control: trims engine torque while the driven wheels spin past their grip
+    var tr = api.mk("label", "vg-row"), ts = api.mk("select", "vg-select"); ts.setAttribute("aria-label", "Traction control");
+    [["auto", "Auto: on with keys, off with a gamepad"], ["on", "On"], ["off", "Off"]].forEach(function(o){
+      var op = api.mk("option", null, o[1]); op.value = o[0]; if(o[0] === tcMode()) op.selected = true; ts.appendChild(op);
+    });
+    ts.addEventListener("change", function(){ setOpt("tc", ts.value); });
+    tr.appendChild(api.mk("span", "vg-muted", "Traction control")); tr.appendChild(ts); box.appendChild(tr);
     check("Speed in mph", V.units === "mph", function(v){ V.units = v ? "mph" : "kmh"; setOpt("units", V.units); });
     check("Low detail (faster on older laptops)", V.low, function(v){ V.low = v; setOpt("low", v); api.toast("Low detail applies from the next stage"); });
     var cr = api.mk("div", "vg-row"); cr.appendChild(api.mk("span", "vg-muted", "Camera"));
@@ -307,7 +317,7 @@ function makeGame(host, opts){
   // common start: the car on the grid, the world built, the countdown
   function beginStage(){
     var st = V.stage;
-    V.car = P.create(clamp(opt("car", 0)|0, 0, P.CARS.length - 1), {assist: V.assist});
+    V.car = P.create(clamp(opt("car", 0)|0, 0, P.CARS.length - 1), {assist: V.assist, tc: tcWanted()});
     P.place(V.car, st.start.x, st.start.z, st.start.h*Math.PI/180, st.env);
     V.gate = 0; V.splits = []; V.raceT = 0; V.finishMs = null; V.hint = 0; V.lastGatePos = {x: st.start.x, z: st.start.z, h: st.start.h};
     V.prog = {}; V.leaderAt = {}; V.results = null; V.upsideT = 0; V.thr = V.brk = V.hb = 0;
@@ -500,7 +510,7 @@ function makeGame(host, opts){
     var kThr = I.down("up") ? 1 : 0, kBrk = I.down("down") ? 1 : 0, kSteer = (I.down("right") ? 1 : 0) - (I.down("left") ? 1 : 0);
     var pThr = padValue(I, 7), pBrk = padValue(I, 6), pSteer = padAxis(I, 0), pHb = Math.max(padValue(I, 0), padValue(I, 2));
     var padActive = pThr > 0.05 || pBrk > 0.05 || Math.abs(pSteer) > 0.05;
-    if(padActive) V.padSeen = now();
+    if(padActive){ V.padSeen = now(); V.lastDev = "pad"; } else if(kThr || kBrk || kSteer) V.lastDev = "kb";
     var analog = now() - V.padSeen < 1.5 && kSteer === 0;
     // keys ramp in (a stab of brake should not lock the wheels at once); triggers pass through
     V.thr += (kThr - V.thr)*Math.min(1, dt*(kThr > V.thr ? 9 : 14));
@@ -538,7 +548,7 @@ function makeGame(host, opts){
     if(V.paused && V.mode === "mp") ctl = {throttle: 0, brake: 0.6, steer: 0, handbrake: 0};
     if(V.phase === "done" && V.finishMs != null) ctl = {throttle: 0, brake: 0.5, steer: 0, handbrake: 0};
     if(racing && IN && IN.pressed("rset")) resetToGate();
-    C.assist = V.assist;
+    C.assist = V.assist; C.tc = tcWanted();
     var px = C.p[0], pz = C.p[2], t0 = V.raceT;
     var n = P.advance(C, ctl, st.env, dt);
     if(V.phase === "race" && V.finishMs == null) V.raceT += n*P.DT;
@@ -805,6 +815,7 @@ function makeGame(host, opts){
     bar(16, "THROT", tel.throttle, T.good, false);
     bar(30, "BRAKE", tel.brake, T.need, false);
     g.fillStyle = tel.hand ? T.need : T.muted; g.font = "700 9px " + T.mono; g.fillText(tel.hand ? "HANDBRAKE" : (tel.drift ? "DRIFT " + Math.round(Math.abs(tel.beta)*57.3) + "°" : (P.SURFACES[tel.surface] || {}).name || ""), 44, 48);
+    if(C.tc){ g.fillStyle = tel.tc ? T.gold : T.muted; g.textAlign = "right"; g.fillText("TC", 164, 48); g.textAlign = "left"; }
   }
   // the next stretch of road, straightened out ahead of the car (travel to the right)
   function drawStrip(){
