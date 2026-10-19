@@ -67,13 +67,17 @@ var LOT_EXTRAS = {
 };
 HQV.hqLotExtras = LOT_EXTRAS;
 // what you cannot walk (or drive) through, in the lot's frame: the garage's three walls, and
-// the car while it is parked (carParked; not while you are driving it). The bike is not.
-function lotExtraBlocked(x, z, carParked){
+// the car while it is parked (carParked; not while you are driving it), in its garage or, given
+// at = {x, z, yaw} (lot frame), wherever it was left. The bike is not.
+function lotExtraBlocked(x, z, carParked, at){
   var G = LOT_EXTRAS.garage, K = LOT_EXTRAS.car, T = 0.2 + 0.3;   // wall + a body's width
   var inX = Math.abs(x - G.x) < G.w/2 + 0.3, inZ = z > G.z - G.d/2 - 0.3 && z < G.z + G.d/2;
   if(inX && Math.abs(z - (G.z - G.d/2)) < T) return true;                          // back wall
   if(inZ && (Math.abs(x - (G.x - G.w/2)) < T || Math.abs(x - (G.x + G.w/2)) < T)) return true;   // side walls
-  return carParked !== false && Math.abs(x - K.x) < K.wid/2 + 0.2 && Math.abs(z - K.z) < K.len/2 + 0.2;
+  if(carParked === false) return false;
+  var cx = at ? at.x : K.x, cz = at ? at.z : K.z, yw = at ? at.yaw || 0 : K.yaw;
+  var dx = x - cx, dz = z - cz, s = Math.sin(yw), c = Math.cos(yw);
+  return Math.abs(dx*c - dz*s) < K.wid/2 + 0.2 && Math.abs(dx*s + dz*c) < K.len/2 + 0.2;
 }
 HQV.hqLotExtraBlocked = lotExtraBlocked;
 // an HQ's own colours, read the way its building reads them (games/hqbase.js): paint and accent
@@ -148,16 +152,20 @@ HQV.hqWorlds.city = function(c, w){
     var gg = new THREE.Group(); gg.position.set(G.x, 0, G.z); g.add(gg);
     // the garage: a floor, three walls, a flat roof, the roller door rolled up under the lintel
     box(G.w, 0.06, G.d, emis(0x4a545e, 0xfff1d6, 0.05, {roughness: 0.9}), 0, 0.03, 0, gg);   // the floor, lit by its lamp
-    box(G.w, G.h, 0.2, wallM, 0, G.h/2, -G.d/2 + 0.1, gg);
-    box(0.2, G.h, G.d, wallM, -G.w/2 + 0.1, G.h/2, 0, gg);
-    box(0.2, G.h, G.d, wallM, G.w/2 - 0.1, G.h/2, 0, gg);
-    box(G.w + 0.3, 0.2, G.d + 0.3, mat(0x3a4552, {roughness: 0.7}), 0, G.h + 0.1, 0, gg);
-    box(G.w, 0.45, 0.2, wallM, 0, G.h - 0.22, G.d/2 - 0.1, gg);                        // the lintel over the opening
-    box(G.w + 0.3, 0.12, 0.06, trimM, 0, G.h - 0.06, G.d/2 + 0.02, gg);                // accent strip
+    // the walls, and the top (roof, lintel, rolled-up door): the top fades while you are inside,
+    // the whole garage while it stands between you and the camera (fadeGarages)
+    var walls = new THREE.Group(), top = new THREE.Group(); gg.add(walls); gg.add(top);
+    box(G.w, G.h, 0.2, wallM, 0, G.h/2, -G.d/2 + 0.1, walls);
+    box(0.2, G.h, G.d, wallM, -G.w/2 + 0.1, G.h/2, 0, walls);
+    box(0.2, G.h, G.d, wallM, G.w/2 - 0.1, G.h/2, 0, walls);
+    box(G.w + 0.3, 0.2, G.d + 0.3, mat(0x3a4552, {roughness: 0.7}), 0, G.h + 0.1, 0, top);
+    box(G.w, 0.45, 0.2, mat(col.paint, {roughness: 0.8}), 0, G.h - 0.22, G.d/2 - 0.1, top);   // the lintel over the opening
+    box(G.w + 0.3, 0.12, 0.06, trimM, 0, G.h - 0.06, G.d/2 + 0.02, top);              // accent strip
+    L.garage = {top: top, walls: walls, on: 0};
     var slats = c.canvasTex(64, 32, function(gx){ gx.fillStyle = "#c9d1d9"; gx.fillRect(0, 0, 64, 32); gx.fillStyle = "rgba(0,0,0,.3)";
       for(var y = 3; y < 32; y += 6) gx.fillRect(0, y, 64, 2); });
     var roll = new THREE.Mesh(new THREE.BoxGeometry(G.w - 0.45, 0.38, 0.4), new THREE.MeshStandardMaterial({map: slats.t, roughness: 0.6, metalness: 0.3}));
-    roll.position.set(0, G.h - 0.62, G.d/2 - 0.35); roll.castShadow = true; gg.add(roll);              // the door, rolled up
+    roll.position.set(0, G.h - 0.62, G.d/2 - 0.35); roll.castShadow = true; top.add(roll);             // the door, rolled up
     sph(0.1, emis(0xfff1d6, 0xffd9a0, 2), 0, G.h - 0.12, G.d/2 + 0.2, gg);
     var gl = c.glow(0xffd9a0, 2.2, 0.7); gl.position.set(0, G.h - 0.2, G.d/2 + 0.45); gg.add(gl); lampGlows.push(gl);
     var inside = c.glow(0xfff1d6, 3.0, 0.35); inside.position.set(0, G.h - 0.4, 0); gg.add(inside); lampGlows.push(inside);
@@ -174,14 +182,16 @@ HQV.hqWorlds.city = function(c, w){
       m.emissive.copy(m.color); m.emissiveIntensity = 0.28; } }); }
     lamplit(Cm.g);
     var kp = street(K); L.car = {g: Cm.g};
-    bikes.push({g: Cm.g, x: kp.x, z: kp.z, yaw: K.yaw + L.rot, color: col.accent, roof: col.paint, kind: "car"});
+    // (id: the same prop after a rebuild; stay: hq3d.js parks it wherever you get off)
+    var uid = "lot:" + L.h.userId + ":";
+    bikes.push({g: Cm.g, x: kp.x, z: kp.z, yaw: K.yaw + L.rot, color: col.accent, roof: col.paint, kind: "car", id: uid + "car", stay: true});
     // its motorbike and its bicycle beside the car, in the HQ's accent
     var Mo = X.moto, Mm = c.moto(col.accent); Mm.g.position.set(Mo.x, 0, Mo.z); Mm.g.rotation.y = Mo.yaw; g.add(Mm.g);
     var mp = street(Mo);
-    lamplit(Mm.g); bikes.push({g: Mm.g, x: mp.x, z: mp.z, yaw: Mo.yaw + L.rot, color: col.accent, kind: "moto"});
+    lamplit(Mm.g); bikes.push({g: Mm.g, x: mp.x, z: mp.z, yaw: Mo.yaw + L.rot, color: col.accent, kind: "moto", id: uid + "moto", stay: true});
     var Bm = c.bike(col.accent); Bm.g.position.set(Bk.x, 0, Bk.z); Bm.g.rotation.y = Bk.yaw; g.add(Bm.g);
     var bp = street(Bk); lamplit(Bm.g);
-    bikes.push({g: Bm.g, x: bp.x, z: bp.z, yaw: Bk.yaw + L.rot, color: col.accent});
+    bikes.push({g: Bm.g, x: bp.x, z: bp.z, yaw: Bk.yaw + L.rot, color: col.accent, id: uid + "bike", stay: true});
   }
   // one tab's building (games/hqbase.js): its door opens that tab
   function viewBuilding(L){
@@ -364,7 +374,7 @@ HQV.hqWorlds.city = function(c, w){
     cols.forEach(function(col, i){
       var lx = SP.HW - 0.5, lz = -7.2 + i*0.55, Bd = c.board(col);
       Bd.g.position.set(lx, 0, lz); Bd.g.rotation.y = -PI/2; g.add(Bd.g);
-      list.push({g: Bd.g, x: cx + lx, z: cz + lz, yaw: -PI/2, color: col, kind: "skate"});
+      list.push({g: Bd.g, x: cx + lx, z: cz + lz, yaw: -PI/2, color: col, kind: "skate", id: "skate:" + i});
     });
     var sign = c.label("\uD83D\uDEF9 Skatepark · press E on a board", HEX.amber, 0.7); sign.position.set(SP.HW - 0.5, 2.4, -6.4); g.add(sign);
     list.forEach(function(b){ bikes.push(b); });
@@ -372,7 +382,7 @@ HQV.hqWorlds.city = function(c, w){
   }
 
   /* ---------- the bike park: a rack of bikes beside the fountain ---------- */
-  // Walk up to one and press E (hq3d.js does the riding). w.bikes lists them: {g, x, z, yaw, color}.
+  // Walk up to one and press E (hq3d.js does the riding). w.bikes lists them: {g, x, z, yaw, color, id}.
   function bikePark(cx, cz){
     var list = [], g = new THREE.Group(); g.position.set(cx, 0, cz); streetG.add(g);
     var padT = c.canvasTex(128, 256, function(gx){ gx.fillStyle = "#4a5866"; gx.fillRect(0, 0, 128, 256); gx.strokeStyle = "rgba(255,255,255,.35)"; gx.lineWidth = 3;
@@ -387,7 +397,7 @@ HQV.hqWorlds.city = function(c, w){
       var z = -3.75 + i*1.5;
       var hoop = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.03, 6, 20, PI), steel); hoop.position.set(-0.7, 0.05, z); hoop.rotation.y = PI/2; hoop.castShadow = true; g.add(hoop);
       var B = c.bike(cols[i]); B.g.position.set(0, 0, z); B.g.rotation.y = -PI/2; g.add(B.g);   // facing the fountain
-      list.push({g: B.g, x: cx, z: cz + z, yaw: -PI/2, color: cols[i]});
+      list.push({g: B.g, x: cx, z: cz + z, yaw: -PI/2, color: cols[i], id: "rack:" + i});
     }
     var sign = c.label("\uD83D\uDEB2 Bike park · press E", HEX.green, 0.7); sign.position.set(0.9, 2.6, 0); g.add(sign);
     return list;
@@ -406,7 +416,8 @@ HQV.hqWorlds.city = function(c, w){
       var L = all[i], rx = x - L.x, rz = z - L.z, c0 = Math.cos(-L.rot), s0 = Math.sin(-L.rot);
       var lx = rx*c0 + rz*s0, lz = -rx*s0 + rz*c0;              // into the lot's own frame
       if(L.B && L.B.blockedLocal(lx, lz)) return true;
-      if(L.h && lotExtraBlocked(lx, lz, !L.car || L.car.g.visible)) return true;   // its garage, and its car unless you drive it
+      // its garage, and its car (where it stands: you may have parked it in the street) unless you drive it
+      if(L.h && lotExtraBlocked(lx, lz, !L.car || L.car.g.visible, L.car && {x: L.car.g.position.x, z: L.car.g.position.z, yaw: L.car.g.rotation.y})) return true;
     }
     return false;
   }
@@ -415,6 +426,9 @@ HQV.hqWorlds.city = function(c, w){
   w.hits = hits; w.doors = doors; w.span = 18; w.zoom = 0.8; w.camY = 2.5; w.follow = 1; w.camPitch = 0.72;
   w.blocked = blocked;
   Object.defineProperty(w, "bikes", {get: function(){ return bikes; }, configurable: true});
+  // where each HQ stands now ({u, x, z}): hq3d.js keeps you (and what you parked) with your block
+  // when someone joins or leaves and the street is laid out again
+  Object.defineProperty(w, "lots", {get: function(){ return city.lots.map(function(L){ return {u: L.h.userId, x: L.x, z: L.z}; }); }, configurable: true});
   w.onCity = function(){ build(); };
   w.setTime = function(n){ night = n; S.background = n ? skyBg.night : skyBg.day; S.fog = new THREE.Fog(n ? 0x0f1f30 : 0xb8dcf2, 90, 220);
     hemi.intensity = n ? 1.3 : 2.4; sun.intensity = n ? 0.7 : 2.4; sun.color.set(n ? 0xa9b8ff : 0xfff2dc);
@@ -422,7 +436,31 @@ HQV.hqWorlds.city = function(c, w){
   w.onLook = function(){ sig = null; build(); };
   // A building between you and the camera fades (games/hqbase.js), so you are never lost behind a tower.
   var fadeAcc = 0;
-  function cutaway(){ HQV.hqCutaway(c, city.lots.concat(city.views)); }
+  function cutaway(){ HQV.hqCutaway(c, city.lots.concat(city.views)); fadeGarages(); }
+  // Inside a garage (on foot, or getting into the car or onto a bike) its roof would hide you from
+  // the camera above: it fades to a ghost while you are under it, and the whole garage does while
+  // it stands between you and the camera (as the buildings do, games/hqbase.js cutaway).
+  function ghost(g, on){
+    g.traverse(function(o){ if(!o.isMesh) return; var m = o.material;
+      m.transparent = on; m.opacity = on ? 0.18 : 1; m.depthWrite = !on; m.needsUpdate = true; o.castShadow = !on; });
+  }
+  function fadeGarages(){
+    var me = c.avatar(), v = c.view && c.view(), G = LOT_EXTRAS.garage; if(!me || !v) return;
+    var ux = Math.sin(v.yaw), uz = Math.cos(v.yaw), reach = G.h/Math.max(0.2, Math.tan(v.pitch)) + 4;
+    city.lots.forEach(function(L){
+      if(!L.garage) return;
+      var rx = me.x - L.x, rz = me.z - L.z, c0 = Math.cos(-L.rot), s0 = Math.sin(-L.rot);
+      var lx = rx*c0 + rz*s0, lz = -rx*s0 + rz*c0;
+      var inside = Math.abs(lx - G.x) < G.w/2 + 0.6 && lz > G.z - G.d/2 - 0.6 && lz < G.z + G.d/2 + 1.2;
+      // the garage's middle in the street's frame, against the line from you to the camera
+      var gx = L.x + G.x*Math.cos(L.rot) + G.z*Math.sin(L.rot) - me.x, gz = L.z - G.x*Math.sin(L.rot) + G.z*Math.cos(L.rot) - me.z;
+      var along = gx*ux + gz*uz, side = Math.abs(gx*uz - gz*ux);
+      var hides = !inside && along > 0.5 && along < reach && side < Math.max(G.w, G.d)/2 + 0.8;
+      var on = hides ? 2 : inside ? 1 : 0;
+      if(L.garage.on === on) return;
+      L.garage.on = on; ghost(L.garage.top, on > 0); ghost(L.garage.walls, on === 2);
+    });
+  }
   // a point s metres round the rectangle with half-sides ax, az (clockwise seen from above), and its heading
   function rectAt(s, ax, az){
     var per = 4*(ax + az); s = ((s % per) + per) % per;
