@@ -1967,6 +1967,17 @@ html.hq-calm #confetti{display:none!important}
 .tcard-back{position:fixed;inset:0;background:var(--scrim);display:none;align-items:center;justify-content:center;z-index:80;padding:16px}
 .tcard-back.open{display:flex}
 .tcard-modal{width:min(440px,100%);max-height:90vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:14px 16px;display:grid;gap:10px}
+/* "New: HQ Notch" (ui/app/37-notch-invite.js) */
+.ni-modal{width:min(480px,100%)}
+.ni-body{display:grid;gap:10px}
+.ni-lead{margin:0;font-weight:650;color:var(--ink)}
+.ni-list{margin:0;padding-left:18px;display:grid;gap:4px;color:var(--ink)}
+.ni-note{margin:0;font-size:12px}
+.ni-error{margin:0;font-size:12px;color:var(--need)}
+.ni-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.ni-status{font-size:13px;color:var(--muted)}
+.ni-status.ok{color:var(--good);font-weight:650}
+.ni-never{margin-left:auto}
 .tcard-top{display:flex;justify-content:space-between;align-items:center}
 .tcard-head{display:flex;gap:12px;align-items:center}
 .tcard-head h3{margin:0;font-size:18px}

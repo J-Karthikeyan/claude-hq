@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 2.5.2** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 2.6.0** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -334,6 +334,11 @@ and feature guide.
 
 ## Changelog
 
+- **2.6.0 — Get HQ Notch from HQ.** The next time you open HQ on a Mac without HQ Notch, it asks once:
+  **Install now** (HQ runs `notch/tools/install.py` for you; it needs the Xcode Command Line Tools), copy the
+  command, ask again in 3 days, or never. Local only: `GET /api/notch/status`, `POST /api/notch/install`
+  (CSRF-protected), `ext_notch.py`.
+
 - **Unreleased (2.5.2): the Overflow Vial.** A creature that is already Apex keeps earning past
   70 prompts, and HQ now banks half of that surplus (5 XP per prompt) into a shared local ledger
   (`vial.json`, 0600). Each drop dies 24 h after it lands, spends eat the soonest-to-die drop
@@ -348,7 +353,7 @@ and feature guide.
   payload sessions with zero prompts are no longer dropped (a creature you see in the Pokédex is
   always reachable to lift).
 
-- **Unreleased: Arena City garages and a skatepark.** Every HQ has a garage in its own colours with a
+- **2.6.0 — Arena City garages and a skatepark.** Every HQ has a garage in its own colours with a
   drivable car, a motorbike and a bicycle (E; motor vehicles have an accelerator and a handbrake). The
   plaza has a skatepark: two quarter pipes, a fun box, a ledge and a rail, a row of boards to step on,
   ollies, airs, 180/360/540 spins, kickflips, shove-its, grinds, bails and combos with your best kept on
@@ -357,7 +362,7 @@ and feature guide.
   your car or motorbike (`a = 5` / `6`, the `"drive"` capability), skaters bend, tuck and throw their arms out
   on tricks, and a weekly **Skate board** lists the best combos (only the combo's total and trick count are sent).
 
-- **Unreleased** — **HQ Notch** (`notch/`, macOS, optional). A notch companion app: every live Claude
+- **2.6.0** — **HQ Notch** (`notch/`, macOS, optional). A notch companion app: every live Claude
   Code session as its HQ Pokémon (same species, evolution and shiny as the dashboard), animated by state
   (working, needs you, done, error, idle), with HQ's session titles, the current tool and a live ticker
   with `+N −M` for edits. Permission prompts open the notch with **Allow / Always / Deny / Terminal**,

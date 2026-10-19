@@ -1019,6 +1019,7 @@ function restoreOpener(){ var t=MODAL_RETURN; MODAL_RETURN=null;
 // The currently-topmost open overlay, or null. Order = visual stacking priority.
 function currentModal(){
   if($("warroom") && $("warroom").classList.contains("on")) return $("warroom");
+  if($("notchInviteBack") && $("notchInviteBack").classList.contains("open")) return $("notchInviteBack");
   if($("evoPickBack") && $("evoPickBack").classList.contains("open")) return $("evoPickBack");
   if($("evoPreviewBack") && $("evoPreviewBack").classList.contains("open")) return $("evoPreviewBack");
   if(typeof CMDK_OPEN!=="undefined" && CMDK_OPEN) return $("cmdk");

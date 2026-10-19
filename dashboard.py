@@ -59,13 +59,13 @@ import worksignals
 # optional start(ctx)). Each import is guarded so one broken module never takes
 # the HQ down.
 EXT = []
-for _ext_name in ("ext_skills", "ext_loot", "ext_prestige", "ext_maps", "ext_cups", "ext_boss", "ext_skate"):
+for _ext_name in ("ext_skills", "ext_loot", "ext_prestige", "ext_maps", "ext_cups", "ext_boss", "ext_skate", "ext_notch"):
     try:
         EXT.append(__import__(_ext_name))
     except Exception:
         pass
 
-APP_VERSION = "2.5.2"   # Overflow Vial: Apex surplus banks XP for lifting species one stage
+APP_VERSION = "2.6.0"   # HQ Notch (your party in the notch, approvals), garages, the skatepark
 
 # --------------------------------------------------------------------------- #
 # Paths / constants
@@ -5496,6 +5496,7 @@ POST_PATHS = (
     "/api/arena/sounds",
     "/api/games/state",
     "/api/vial/spend",
+    "/api/notch/install",
 ) + ARENA_ROOM_POSTS + tuple(p for m in EXT for p in getattr(m, "POST", {}))
 
 
@@ -6457,6 +6458,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, json.dumps({"error": "bad save: %s" % e}))
             except OSError as e:
                 self._send(500, json.dumps({"error": "could not write save: %s" % e}))
+            return
+
+        if path == "/api/notch/install":
+            # HQ Notch from HQ (ext_notch.py): the same install as `python3 notch/tools/install.py`
+            try:
+                import ext_notch
+                code, resp = ext_notch.install(body)
+            except Exception as e:
+                code, resp = 500, {"error": "could not start the install: %s" % e}
+            self._send(code, json.dumps(resp))
             return
 
         if path == "/api/vial/spend":
