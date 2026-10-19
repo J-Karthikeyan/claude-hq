@@ -133,6 +133,7 @@ function openSettings(){
   var ws=$("setWorkSignals"), wp=$("setWorkSignalsPRs");
   if(ws) ws.checked = c.workSignals===true;
   if(wp){ wp.checked = c.workSignalsPRs===true; wp.disabled = !(ws && ws.checked); }
+  var ab=$("setAccountBoard"); if(ab) ab.checked = c.arenaAccountBoard===true;
   var tn=$("setTrainer"); if(tn) tn.value=trainerPref();
   if(typeof syncAccentControls==="function") syncAccentControls();
   $("settingsBack").classList.add("open");
@@ -170,6 +171,7 @@ function saveSettings(){
     musicCookies: $("setMusicCookies") ? $("setMusicCookies").value : ""
   };
   if($("setWorkSignals")){ body.workSignals=!!$("setWorkSignals").checked; body.workSignalsPRs=body.workSignals && !!($("setWorkSignalsPRs") && $("setWorkSignalsPRs").checked); }
+  if($("setAccountBoard")) body.arenaAccountBoard=!!$("setAccountBoard").checked;
   if(body.character===undefined) delete body.character;   // no WebGL2: the 3D character is left as it was
   // localStorage mirror so the Trainer Card paints instantly on next boot,
   // before the /api/config fetch resolves (resolveTrainerSpec validates it).

@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
-pub const APP_VERSION: &str = "2.6.2";
+pub const APP_VERSION: &str = "2.6.3";
 
 pub static UUID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9a-fA-F-]{36}$").unwrap());
 pub static RID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9_-]{16,64}$").unwrap());
@@ -55,6 +55,9 @@ pub struct Paths {
     pub sounds_dir: PathBuf,
     pub music_cache: PathBuf,
     pub arena_link: PathBuf,
+    /// Claude Code's own state file. Only `oauthAccount.accountUuid` is ever
+    /// read from it, and only to hash (arena.rs `account_key`).
+    pub claude_json: PathBuf,
     pub loot_state: PathBuf,
     pub evo: PathBuf,
     pub vial: PathBuf,
@@ -82,6 +85,10 @@ impl Paths {
             sounds_dir: here.join("sounds"),
             music_cache: here.join(".music-cache"),
             arena_link: here.join("arena-link.json"),
+            claude_json: match std::env::var_os("CLAUDE_CONFIG_DIR").filter(|v| !v.is_empty()) {
+                Some(dir) => PathBuf::from(dir).join(".claude.json"),
+                None => home.join(".claude.json"),
+            },
             loot_state: here.join("loot-state.json"),
             evo: here.join("evo-choices.json"),
             vial: here.join("vial.json"),
@@ -501,6 +508,7 @@ pub fn default_config() -> Obj {
         "arenaUrl": "",
         "arenaEnabled": false,
         "arenaShareCost": false,
+        "arenaAccountBoard": false,
         "creatureFatigue": true,
         "musicShare": true,
         "musicCookies": "",
@@ -591,7 +599,7 @@ pub fn validate_config(raw: &Value, base: Option<&Obj>) -> Obj {
             cfg.insert("musicCookies".into(), Value::from(mc.clone()));
         }
     }
-    for key in ["arenaEnabled", "arenaShareCost", "creatureFatigue", "musicShare"] {
+    for key in ["arenaEnabled", "arenaShareCost", "arenaAccountBoard", "creatureFatigue", "musicShare"] {
         if let Some(v) = raw.get(key) {
             cfg.insert(key.into(), Value::Bool(py::truthy(v)));
         }
@@ -644,6 +652,8 @@ pub(crate) mod testutil {
         p.projects_dir = d.path().join("projects");
         p.cursor_projects_dir = d.path().join("cursor");
         p.cursor_state_db = d.path().join("state.vscdb");
+        // Never the developer's real file, whatever CLAUDE_CONFIG_DIR says.
+        p.claude_json = d.path().join("home").join(".claude.json");
         fs::create_dir_all(&p.projects_dir).unwrap();
         fs::create_dir_all(&p.cursor_projects_dir).unwrap();
         let app = Arc::new(App::new(p));

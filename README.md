@@ -2,7 +2,7 @@
 
 # ⚡ Claude HQ
 
-**Version 2.6.2** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
+**Version 2.6.3** · a **local, private, gamified dashboard** for your Claude Code and Cursor sessions.
 
 Every Claude Code tab becomes a crew member at a desk in your own 3D headquarters.
 Walk in, see who needs you, and play with friends while they work.
@@ -334,6 +334,17 @@ and feature guide.
 
 ## Changelog
 
+- **2.6.3 — The account board.** People signed into the same Claude account can share a row on a
+  new **Account board** under the crew board: the combined level of everyone on that account
+  (scored like a crew), with their handles. Opt-in under Settings › Account board, off by default.
+  **Privacy/egress:** when on, the local HQ (`dashboard-rs`) reads only `oauthAccount.accountUuid`
+  from `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`), never writes it, and sends
+  `sha256("claude-hq:account:v1:" + id)` to the paired Arena (`POST /v1/me/account`, after each
+  publish; `""` when off, which unlinks). Email, organisation, names and the id itself never leave
+  the machine. The Arena stores only an HMAC of that hash, keyed by its secret, on the device row
+  (`backend-rs` migration 0012, one nullable column). Groups need 2 to 20 people with a device seen
+  in the last 30 days. The key is self-reported, so anyone who has used that account can join its
+  group: it is a social board, not proof of anything.
 - **2.6.2 — HQ Notch on the Rust HQ, and an Update that rebuilds it.** The Rust HQ (`dashboard-rs`,
   `claudehq`) now has HQ Notch's routes (`/api/notch/status`, `/api/notch/install`) and evolution
   picks (`/api/evo-choice`, `creature.evo` in `/api/sessions`), so the "New: HQ Notch" dialog and the

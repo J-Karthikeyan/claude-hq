@@ -202,9 +202,9 @@ struct MemberRow {
 /// One user's progression figure. `Copy` so the lookup helper can hand back a
 /// value rather than a borrow that would pin the map.
 #[derive(Clone, Copy)]
-struct Prog {
-    level: i64,
-    xp: i64,
+pub(crate) struct Prog {
+    pub(crate) level: i64,
+    pub(crate) xp: i64,
 }
 
 const CREW_SELECT: &str = "SELECT id, name, tag, color, code, owner_id FROM crews";
@@ -427,7 +427,7 @@ fn xp_for_result(place: i64, players: i64) -> i64 {
 /// is unreachable in normal flow but the Python guards for it, and the guard's
 /// answer is level 0 (`derive_level(0).0 + 0 - 1`), deliberately not clamped
 /// to 1.
-fn crew_level(total_xp: i64, member_count: usize) -> i64 {
+pub(crate) fn crew_level(total_xp: i64, member_count: usize) -> i64 {
     let n = member_count as i64;
     derive_level(total_xp / n.max(1)).0 + n - 1
 }
@@ -589,7 +589,7 @@ async fn game_xp(
 
 /// One HQ level per user: session XP plus game XP, the same figure progression
 /// shows, so a member's level on their crew card matches their profile.
-async fn progress(
+pub(crate) async fn progress(
     conn: &mut SqliteConnection,
     ids: &[String],
 ) -> Result<HashMap<String, Prog>, sqlx::Error> {

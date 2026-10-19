@@ -65,7 +65,7 @@ for _ext_name in ("ext_skills", "ext_loot", "ext_prestige", "ext_maps", "ext_cup
     except Exception:
         pass
 
-APP_VERSION = "2.6.2"   # Rust HQ: notch + evo routes, Update rebuilds; 2.6.1: reopen the notch dialog; 2.6.0: HQ Notch (your party in the notch, approvals), garages, the skatepark
+APP_VERSION = "2.6.3"   # account board (Rust HQ only); 2.6.2: Rust HQ: notch + evo routes, Update rebuilds; 2.6.1: reopen the notch dialog; 2.6.0: HQ Notch (your party in the notch, approvals), garages, the skatepark
 
 # --------------------------------------------------------------------------- #
 # Paths / constants
