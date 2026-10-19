@@ -68,7 +68,7 @@ function cpStyle(){
 }
 
 /* ---- small helpers ---- */
-var CP_GAMES = {kart:["🏎️","Kart Racing"], plat:["🏃","Platformer Rush"], golf:["⛳","Mini Golf"],
+var CP_GAMES = {kart:["🏎️","Kart Racing"], rally:["🏁","Valley Rally"], plat:["🏃","Platformer Rush"], golf:["⛳","Mini Golf"],
                 fps:["🔫","Blaster Arena"], type:["⌨️","Code Typing Race"], bowl:["🎳","Bowling"]};
 function cpGame(g){ return CP_GAMES[g] || ["🏆", String(g||"")]; }
 function cpGet(p){

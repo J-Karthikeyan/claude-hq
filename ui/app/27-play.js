@@ -4,7 +4,7 @@
 // the Arena adds up one score. Only the game name and your place leave this page, as always.
 var QP = {state:"idle", game:null, timer:null, room:null};
 var PARTY = {view:null};
-var PLAY_GAMES = [["kart","🏎️","Kart Racing"],["plat","🏃","Platformer Rush"],["fps","🔫","Blaster Arena"],["golf","⛳","Mini Golf"],["type","⌨️","Code Typing Race"]];
+var PLAY_GAMES = [["kart","🏎️","Kart Racing"],["rally","🏁","Valley Rally"],["plat","🏃","Platformer Rush"],["fps","🔫","Blaster Arena"],["golf","⛳","Mini Golf"],["type","⌨️","Code Typing Race"]];
 function playName(g){ for(var i=0;i<PLAY_GAMES.length;i++) if(PLAY_GAMES[i][0]===g) return PLAY_GAMES[i][2]; return g; }
 function playPost(p, b){ return fetch(p,{method:"POST",headers:{"Content-Type":"application/json","X-HQ-Token":CSRF},body:JSON.stringify(b||{})})
   .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, code:r.status, j:j}; }, function(){ return {ok:false, code:r.status, j:{}}; }); }); }
