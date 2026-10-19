@@ -42,6 +42,27 @@ expect(electrike.floored(floor).name(sessionId: "s") == "Manectric", "floored na
 expect(Creature(species: 38, stage: 4, shiny: false).floored([38: 1]).stage == 4, "floor never lowers")
 expect(electrike.floored([:]) == electrike, "no floor = unchanged")
 
+// a branch / Mega picked in HQ (creature.evo) wins over the hashed default; a bad one is ignored
+let eevee = Creature(species: 4, stage: 4, shiny: false)
+expect(Creature(species: 4, stage: 4, shiny: false, branchDex: 197).dex(sessionId: "abc") == 197, "picked Umbreon")
+expect(Creature(species: 4, stage: 4, shiny: false, branchDex: 25).dex(sessionId: "abc") == eevee.dex(sessionId: "abc"), "bad branch ignored")
+expect(Creature(species: 4, stage: 1, shiny: false, branchDex: 197).dex(sessionId: "abc") == 133, "a pick waits for the final form")
+expect(Creature(species: 4, stage: 0, shiny: false, branchDex: 197).floored([4: 4]).dex(sessionId: "abc") == 197, "floored keeps the pick")
+let zardY = Creature(species: 1, stage: 4, shiny: false, megaSlug: "charizard-megay")
+expect(zardY.megaForm(sessionId: "s", pack: .threeD)?.name == "Mega Charizard Y", "picked Mega Y")
+expect(zardY.megaForm(sessionId: "s", pack: .gen5) == nil, "no Mega in 2D")
+expect(Creature(species: 1, stage: 4, shiny: false, megaSlug: "gengar-mega").megaForm(sessionId: "s", pack: .threeD)
+       == Creature(species: 1, stage: 4, shiny: false).megaForm(sessionId: "s", pack: .threeD), "bad Mega ignored")
+let evoJSON = #"{"sessions":[{"sessionId":"e","status":"idle","kind":"interactive","pid":1,"creature":{"species":4,"stage":4,"shiny":false,"evo":{"branchDex":700}}}]}"#
+expect(HQSession.parse(Data(evoJSON.utf8)).first?.creature?.dex(sessionId: "e") == 700, "creature.evo parsed: Sylveon")
+
+// placement beside other notch apps
+expect(Placement.auto.resolved(otherNotchApp: true) == .left && Placement.auto.resolved(otherNotchApp: false) == .notch, "auto steps aside")
+expect(Placement.right.resolved(otherNotchApp: false) == .right && Placement.notch.resolved(otherNotchApp: true) == .notch, "a fixed choice stays")
+expect(NotchNeighbours.running([(bundleId: "com.apple.finder", name: "Finder"), (bundleId: "com.cshariq.sapphire", name: "Sapphire")], own: "com.claudehq.notch") == "Sapphire", "Sapphire by id")
+expect(NotchNeighbours.running([(bundleId: "x.y", name: "NotchNook")], own: nil) == "NotchNook", "by name")
+expect(NotchNeighbours.running([(bundleId: "com.claudehq.notch", name: "HQ Notch"), (bundleId: "com.apple.Safari", name: "Safari")], own: "com.claudehq.notch") == nil, "not ourselves, not others")
+
 // MARK: store lifecycle
 
 var st = SessionStore()
@@ -124,6 +145,59 @@ expect(o.sessions["need"]?.promptCount == 40, "HQ prompt count")
 expect(o.sessions["need"]?.label == "Fix the bug" && o.sessions["new"]?.label == "y", "label = HQ title, else folder")
 expect(o.sessions["new"]?.folder == "y" && o.sessions["new"]?.status == .working, "HQ seeds live sessions")
 expect(o.sessions["old"] == nil, "archived not seeded")
+
+// MARK: plans, diffs, phone alerts
+
+// a plan waiting for approval
+var pl = SessionStore()
+let planMsg = msg(##"{"event":"PermissionRequest","sessionId":"p","tool":{"tool":"ExitPlanMode","target":""},"wantsReply":true,"toolInput":{"plan":"# Plan\n1. **Do** it"}}"##)
+pl.addPending(id: 3, planMsg, now: t0)
+expect(pl.pending.first?.isPlan == true && pl.pending.first?.plan == "# Plan\n1. **Do** it", "plan parsed")
+expect(pl.pending.first?.isQuestion == false && pl.sessions["p"]?.now == "Has a plan for you", "plan card label")
+pl.addPending(id: 4, msg(#"{"event":"PermissionRequest","sessionId":"p","tool":{"tool":"ExitPlanMode","target":""},"wantsReply":true}"#), now: t0)
+expect(pl.pending.last?.plan == "", "plan without text still a plan card")
+pl.addPending(id: 5, msg(#"{"event":"PermissionRequest","sessionId":"p","tool":{"tool":"Bash","target":"ls"},"wantsReply":true,"toolInput":{"plan":"x"}}"#), now: t0)
+expect(pl.pending.last?.isPlan == false, "only ExitPlanMode is a plan")
+
+// a diff rides on its ticker item
+var dfs = SessionStore()
+dfs.apply(msg(#"{"event":"PostToolUse","sessionId":"d","tool":{"tool":"Edit","target":"a.py"},"toolUseId":"e1","plus":1,"minus":1,"diff":{"edits":[{"old":"a\nb\nc","new":"a\nB\nc"}],"truncated":false}}"#), now: t0)
+expect(dfs.sessions["d"]?.ticker.first?.diff == EditDiff(edits: [.init(old: "a\nb\nc", new: "a\nB\nc")]), "diff kept on the ticker")
+dfs.apply(msg(#"{"event":"PostToolUse","sessionId":"d","tool":{"tool":"Read","target":"a.py"},"toolUseId":"r1"}"#), now: t0)
+expect(dfs.sessions["d"]?.ticker.first?.diff == nil, "no diff for a read")
+expect(msg(#"{"event":"PostToolUse","sessionId":"d","diff":"junk"}"#).diff == nil, "a bad diff is ignored")
+
+// diff lines
+expect(DiffBuilder.lines(old: "a\nb\nc", new: "a\nB\nc") == [.context("a"), .removed("b"), .added("B"), .context("c")], "one changed line")
+expect(DiffBuilder.lines(old: "", new: "x\ny\n") == [.added("x"), .added("y")], "a new file is all added")
+expect(DiffBuilder.lines(old: "1\n2\n3\n4\n5\nold\n6\n7\n8\n9", new: "1\n2\n3\n4\n5\nnew\n6\n7\n8\n9") ==
+       [.gap(3), .context("4"), .context("5"), .removed("old"), .added("new"), .context("6"), .context("7"), .gap(2)], "context is two lines, the rest a gap")
+expect(DiffBuilder.lines(old: "same", new: "same") == [.context("same")], "no change")
+let two = DiffBuilder.lines(EditDiff(edits: [.init(old: "a", new: "b"), .init(old: "c", new: "d")], truncated: true))
+expect(two == [.removed("a"), .added("b"), .gap(0), .removed("c"), .added("d"), .more], "edits separated, truncation shown")
+let big = DiffBuilder.lines(EditDiff(edits: [.init(old: "", new: Array(repeating: "l", count: 900).joined(separator: "\n"))]))
+expect(big.count == DiffBuilder.maxLines + 1 && big.last == .more, "capped at maxLines")
+
+// phone alerts: fixed text, nothing from a session
+expect(PhoneAlert.from(.needsYou(sessionId: "secret-session")).body == "A Claude session needs you", "needs-you text")
+expect(PhoneAlert.from(.finished(sessionId: "x")) == .finished && PhoneAlert.from(.failed(sessionId: "x")) == .failed, "effect -> alert")
+expect(PhoneAlert.allCases.allSatisfy { !$0.body.contains("secret") && $0.title == "Claude HQ" }, "content-free")
+var db = PhoneDebounce()
+expect(db.allow(.needsYou, now: t0) && !db.allow(.needsYou, now: t0.addingTimeInterval(10)), "debounced within 30 s")
+expect(db.allow(.finished, now: t0.addingTimeInterval(10)), "each kind on its own clock")
+expect(db.allow(.needsYou, now: t0.addingTimeInterval(31)), "allowed again after 30 s")
+let topic = PhoneTopic.make(Array(0..<20).map { UInt8($0*13 % 256) })
+expect(topic != nil && PhoneTopic.isValid(topic!) && topic!.count == 23, "topic shape")
+expect(PhoneTopic.make([1, 2, 3]) == nil, "too few random bytes")
+expect(!PhoneTopic.isValid("hq-short") && !PhoneTopic.isValid("HQ-ABCDEFGHIJKLMNOPQRST") && !PhoneTopic.isValid("hq-abcdefghijklmnopqr1s"), "bad topics")
+let tp = "hq-abcdefghijklmnopqrst"
+expect(PhoneTopic.url(server: "https://ntfy.sh", topic: tp)?.absoluteString == "https://ntfy.sh/" + tp, "ntfy url")
+expect(PhoneTopic.url(server: " https://push.example.com/ntfy/ ", topic: tp)?.absoluteString == "https://push.example.com/ntfy/" + tp, "self-hosted path")
+expect(PhoneTopic.url(server: "http://10.0.0.2:8080", topic: tp) != nil, "http on your own network")
+for bad in ["ftp://ntfy.sh", "ntfy.sh", "https://", "https://u:p@ntfy.sh", "https://ntfy.sh?x=1", "javascript:alert(1)"] {
+    expect(PhoneTopic.url(server: bad, topic: tp) == nil, "bad server \(bad)")
+}
+expect(PhoneTopic.url(server: "https://ntfy.sh", topic: "../etc") == nil, "bad topic in url")
 
 // MARK: parity with HQ
 

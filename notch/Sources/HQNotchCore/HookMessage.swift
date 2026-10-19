@@ -28,6 +28,8 @@ public struct HookMessage: Decodable, Sendable {
     public var canAlways: Bool?
     public var question: Bool?
     public var wantsReply: Bool?
+    /// After an edit tool ran: what it changed (see `edit_diff()` in the hook), for the diff view.
+    public var diff: EditDiff?
 
     public init(event: String, sessionId: String, cwd: String = "", tool: Tool? = nil) {
         v = 1; self.event = event; self.sessionId = sessionId; self.cwd = cwd
@@ -36,7 +38,7 @@ public struct HookMessage: Decodable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case v, event, sessionId, cwd, transcriptPath, ppid, env, tool, toolUseId, plus, minus,
-             error, prompt, message, notificationType, source, toolInput, canAlways, question, wantsReply
+             error, prompt, message, notificationType, source, toolInput, canAlways, question, wantsReply, diff
     }
 
     public init(from d: Decoder) throws {
@@ -61,6 +63,27 @@ public struct HookMessage: Decodable, Sendable {
         canAlways = try? c.decode(Bool.self, forKey: .canAlways)
         question = try? c.decode(Bool.self, forKey: .question)
         wantsReply = try? c.decode(Bool.self, forKey: .wantsReply)
+        diff = try? c.decode(EditDiff.self, forKey: .diff)
+    }
+}
+
+/// The change an edit tool made: old/new text per edit (Write: old is empty), each side
+/// already capped by the hook; `truncated` when the hook cut something.
+public struct EditDiff: Decodable, Sendable, Equatable {
+    public struct Edit: Decodable, Sendable, Equatable {
+        public var old: String
+        public var new: String
+        public init(old: String, new: String) { self.old = old; self.new = new }
+    }
+    public var edits: [Edit]
+    public var truncated: Bool
+    public init(edits: [Edit], truncated: Bool = false) { self.edits = edits; self.truncated = truncated }
+
+    enum CodingKeys: String, CodingKey { case edits, truncated }
+    public init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        edits = (try? c.decode([Edit].self, forKey: .edits)) ?? []
+        truncated = (try? c.decode(Bool.self, forKey: .truncated)) ?? false
     }
 }
 

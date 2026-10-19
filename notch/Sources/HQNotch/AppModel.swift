@@ -1,5 +1,6 @@
 import AppKit
 import HQNotchCore
+import Security
 import SwiftUI
 
 /// Notch colours. The pill sits in the notch, so it is always dark whatever the system
@@ -57,6 +58,18 @@ final class AppModel: ObservableObject {
     }
     /// Settings speaks in "on" terms.
     var soundsOn: Bool { get { !muted } set { muted = !newValue } }
+    /// Where the pill sits (Placement.auto steps beside the notch while another notch app runs).
+    @Published var placement = Placement(rawValue: UserDefaults.standard.string(forKey: "hqnotch.placement") ?? "") ?? .auto {
+        didSet { UserDefaults.standard.set(placement.rawValue, forKey: "hqnotch.placement") }
+    }
+    /// The other notch app running now (its name), if any.
+    @Published var otherNotchApp: String?
+    var placed: Placement { placement.resolved(otherNotchApp: otherNotchApp != nil) }
+    func scanNotchApps() {
+        let apps = NSWorkspace.shared.runningApplications.map { (bundleId: $0.bundleIdentifier, name: $0.localizedName) }
+        let found = NotchNeighbours.running(apps, own: Bundle.main.bundleIdentifier)
+        if found != otherNotchApp { otherNotchApp = found }
+    }
     /// Which sprites to draw: 2D, 3D, or whatever pack HQ itself uses.
     @Published var spriteSetting = SpriteSetting(rawValue: UserDefaults.standard.string(forKey: "hqnotch.sprites") ?? "") ?? .twoD {
         didSet { UserDefaults.standard.set(spriteSetting.rawValue, forKey: "hqnotch.sprites") }
@@ -70,6 +83,25 @@ final class AppModel: ObservableObject {
     }
     /// HQ's address; only 127.0.0.1 / localhost is ever used.
     let hqURL = UserDefaults.standard.string(forKey: "hqnotch.hqURL") ?? "http://127.0.0.1:8765"
+
+    // Phone alerts (opt-in, off by default): content-free pushes to an ntfy topic.
+    @Published var phoneOn = UserDefaults.standard.bool(forKey: "hqnotch.phone") {
+        didSet { UserDefaults.standard.set(phoneOn, forKey: "hqnotch.phone") }
+    }
+    @Published var phoneServer = UserDefaults.standard.string(forKey: "hqnotch.phoneServer") ?? "https://ntfy.sh" {
+        didSet { UserDefaults.standard.set(phoneServer, forKey: "hqnotch.phoneServer") }
+    }
+    @Published var phoneAwayOnly = UserDefaults.standard.bool(forKey: "hqnotch.phoneAway") {
+        didSet { UserDefaults.standard.set(phoneAwayOnly, forKey: "hqnotch.phoneAway") }
+    }
+    /// Made once per Mac (PhoneTopic), then kept.
+    @Published private(set) var phoneTopic: String = AppModel.loadTopic()
+    /// The last test push's outcome, for the settings view.
+    @Published var phoneStatus: String?
+    private var phoneDebounce = PhoneDebounce()
+
+    /// The diff view is showing this ticker item's change in place of the session list.
+    @Published var showDiff: (item: TickerItem, folder: String)?
 
     let server = HookServer()
     private var salt: String?
@@ -184,9 +216,11 @@ final class AppModel: ObservableObject {
     }
 
     private func effect(_ e: StoreEffect) {
+        phone(PhoneAlert.from(e))
         switch e {
         case .needsYou:
             showSettings = false          // a request must never hide behind the settings view
+            showDiff = nil                // ...or behind a diff
             attention += 1
             play("Funk")
         case .finished:
@@ -205,6 +239,8 @@ final class AppModel: ObservableObject {
 
     func allow(_ r: PendingRequest, always: Bool = false) { send(r, ["decision": always ? "always" : "allow"]) }
     func deny(_ r: PendingRequest) { send(r, ["decision": "deny", "message": "Denied from HQ Notch"]) }
+    /// A plan (ExitPlanMode) sent back: Claude stays in plan mode.
+    func keepPlanning(_ r: PendingRequest) { send(r, ["decision": "deny", "message": "Keep planning — not approved yet"]) }
     /// Hand the request back to Claude Code's own terminal prompt.
     func passToTerminal(_ r: PendingRequest) {
         if r.isQuestion { passedQuestion[r.sessionId] = Date() }
@@ -218,9 +254,71 @@ final class AppModel: ObservableObject {
         store.resolvePending(id: r.id)
     }
 
+    // MARK: phone alerts
+
+    /// Push one content-free alert, if phone alerts are on (and you are away, when asked).
+    private func phone(_ a: PhoneAlert) {
+        guard phoneOn, !phoneAwayOnly || Self.awaySeconds() > 120, phoneDebounce.allow(a) else { return }
+        Task { _ = await push(a.title, a.body, tags: a.tags, priority: a.priority) }
+    }
+
+    func sendTestPush() {
+        phoneStatus = "Sending…"
+        Task {
+            let ok = await push("Claude HQ", "Test from HQ Notch: phone alerts work", tags: "tada", priority: "default")
+            phoneStatus = ok ? "Sent. Check your phone." : "Could not reach \(phoneServer). Check the server and your connection."
+        }
+    }
+
+    /// POST to the ntfy topic. The body and headers are fixed strings (PhoneAlert): nothing
+    /// from a session ever goes in.
+    private func push(_ title: String, _ body: String, tags: String, priority: String) async -> Bool {
+        guard let url = PhoneTopic.url(server: phoneServer, topic: phoneTopic) else { return false }
+        var req = URLRequest(url: url, timeoutInterval: 8)
+        req.httpMethod = "POST"
+        req.httpBody = Data(body.utf8)
+        req.setValue(title, forHTTPHeaderField: "Title")
+        req.setValue(tags, forHTTPHeaderField: "Tags")
+        req.setValue(priority, forHTTPHeaderField: "Priority")
+        guard let (_, resp) = try? await URLSession.shared.data(for: req) else { return false }
+        return ((resp as? HTTPURLResponse)?.statusCode ?? 0) / 100 == 2
+    }
+
+    /// A new random topic (anyone with the old one can no longer follow you).
+    func newPhoneTopic() {
+        phoneTopic = Self.makeTopic()
+        UserDefaults.standard.set(phoneTopic, forKey: "hqnotch.phoneTopic")
+    }
+
+    static func loadTopic() -> String {
+        if let t = UserDefaults.standard.string(forKey: "hqnotch.phoneTopic"), PhoneTopic.isValid(t) { return t }
+        let t = makeTopic()
+        UserDefaults.standard.set(t, forKey: "hqnotch.phoneTopic")
+        return t
+    }
+
+    static func makeTopic() -> String {
+        var bytes = [UInt8](repeating: 0, count: 20)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        return PhoneTopic.make(bytes) ?? "hq-" + String(UUID().uuidString.lowercased().filter { $0.isLetter }.prefix(20))
+    }
+
+    /// Seconds since your last key press, click, scroll or mouse move on this Mac.
+    static func awaySeconds() -> Double {
+        let kinds: [CGEventType] = [.keyDown, .leftMouseDown, .rightMouseDown, .mouseMoved, .scrollWheel]
+        return kinds.map { CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: $0) }.min() ?? 0
+    }
+
     // MARK: actions
 
     func jump(_ s: Session) { TerminalJump.focus(s) }
+
+    /// Open a ticker item's change (it has one: an edit) in the diff view.
+    func openDiff(_ item: TickerItem, in s: Session) {
+        guard item.diff != nil else { return }
+        showSettings = false
+        showDiff = (item, s.label)
+    }
 
     func openHQ() {
         if let u = URL(string: hqURL), ["127.0.0.1", "localhost"].contains(u.host ?? "") { NSWorkspace.shared.open(u) }

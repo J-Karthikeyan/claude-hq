@@ -207,7 +207,7 @@ See [`notch/README.md`](notch/README.md). `--uninstall` removes it all again.
   list cannot be read (e.g. the `claude` CLI is missing), Close is refused with `503`.
 - POST bodies are capped at 1 MiB (8 MiB for soundboard uploads); larger requests get `413` (sent
   without reading the body, so a client mid-upload may see a connection reset instead).
-- Local state files (`config.json`, `sessions-meta.json`, `arena-link.json`, `.dex-seed`) are written
+- Local state files (`config.json`, `sessions-meta.json`, `evo-choices.json`, `arena-link.json`, `.dex-seed`) are written
   atomically with `0600` permissions. A file that no longer parses is set aside as
   `<name>.corrupt-<timestamp>` (git-ignored) and defaults are used, so nothing is silently overwritten.
   A symlinked state file is written through (the link is kept, the target replaced).
@@ -235,6 +235,7 @@ See [`notch/README.md`](notch/README.md). `--uninstall` removes it all again.
 | `config.json` | Your settings (theme, pack, budget, …). Created on first save. *(git-ignored)* |
 | `sessions-meta.json` | Per-session pins / tags / notes / rename aliases. *(git-ignored)* |
 | `meals.json` | Which session ate which snack (local only). *(git-ignored)* |
+| `evo-choices.json` | The branch / Mega form you picked per session (local only; `POST /api/evo-choice`). *(git-ignored)* |
 
 ### HTTP API (all `127.0.0.1` only)
 `GET /` · `GET /api/sessions` · `GET /api/stream` (SSE) · `GET /api/session/<id>` ·
@@ -242,7 +243,7 @@ See [`notch/README.md`](notch/README.md). `--uninstall` removes it all again.
 `GET /api/history` · `GET /api/project?folder=` · `GET /api/pokedex` · `GET /api/digest?date&download` ·
 `GET /api/config` · `GET /api/meta` · `GET /api/export.{json,csv}` · `GET /api/arena/pantry` ·
 `GET /api/arena/cali/board?window={season,30d,7d,all,lastseason}` · `GET /api/arena/cali/orders` ·
-`POST /api/action` · `POST /api/config` · `POST /api/meta` ·
+`POST /api/action` · `POST /api/config` · `POST /api/meta` · `POST /api/evo-choice` ·
 `POST /api/arena/pantry/{claim,buy,eat,give}` · `POST /api/arena/cali/order`
 (all POSTs CSRF-guarded).
 
@@ -265,6 +266,9 @@ replies, file paths, project or folder names, session ids, or titles.
   and routinely carry an employer's or client's name, so anything that isn't a
   built-in Claude Code tool is bucketed as `Other` before it reaches the wire.
 - **Cost sharing is off by default.** Spend is salary- and employer-adjacent.
+- **The skate board is two numbers.** When a combo in Arena City's skatepark beats your
+  best for the week, the page sends its total and how many tricks it chained (checked
+  by `ext_skate.py`, then by the Arena). Nothing about where, when or from which session.
 - **Chat is only what you type.** Messages in the lobby chat go to everyone in
   the lobby, relayed by the server. It keeps the last 50 in memory (never on
   disk) so people who join can catch up; they're gone when the lobby empties or
@@ -349,7 +353,9 @@ and feature guide.
   plaza has a skatepark: two quarter pipes, a fun box, a ledge and a rail, a row of boards to step on,
   ollies, airs, 180/360/540 spins, kickflips, shove-its, grinds, bails and combos with your best kept on
   this machine. Others in the Arena see you skate and your tricks (presence `a = 4` with a trick `k` and a
-  height `y`, behind the new `"skate"` capability; the Rust Arena stores and relays them).
+  height `y`, behind the new `"skate"` capability; the Rust Arena stores and relays them). Others also see
+  your car or motorbike (`a = 5` / `6`, the `"drive"` capability), skaters bend, tuck and throw their arms out
+  on tricks, and a weekly **Skate board** lists the best combos (only the combo's total and trick count are sent).
 
 - **Unreleased** — **HQ Notch** (`notch/`, macOS, optional). A notch companion app: every live Claude
   Code session as its HQ Pokémon (same species, evolution and shiny as the dashboard), animated by state
@@ -365,6 +371,10 @@ and feature guide.
   new session of an evolved species shows its evolved form; the notch opens after a 0.5 s hover.
   A settings view in the notch (gear icon): **2D / 3D / Match HQ** sprites (3D shows Mega forms at Apex),
   sounds, idle sessions and notch approvals.
+  Plan cards (approve or keep planning from the notch), a diff view for each edit in the ticker, and
+  opt-in **phone alerts** via ntfy (fixed, content-free text only; see `notch/README.md`, Privacy).
+  Branch and Mega picks (Eevee's form, Charizard X / Y) are kept by HQ itself (`evo-choices.json`, local
+  only) and sent as `creature.evo`, so the notch and every browser show the form you picked.
 
 - **2.5.1** — **Strikezone.** A new team shooter in the Arena (Valley, game `strike`), separate from
   Blaster Arena (which is untouched):

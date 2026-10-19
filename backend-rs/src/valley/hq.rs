@@ -254,8 +254,9 @@ fn anim_ok(a: &Value) -> bool {
         Value::Bool(_) => true,
         // 0 still, 1 walk, 2 run -- and 3, riding a bike in Arena City (the "ride"
         // capability in protocol.rs; a page only sends 3 to an Arena that lists it),
-        // and 4, on a skateboard (the "skate" capability, likewise).
-        Value::Number(n) => n.as_f64().is_some_and(|f| f == 0.0 || f == 1.0 || f == 2.0 || f == 3.0 || f == 4.0),
+        // 4, on a skateboard (the "skate" capability, likewise), and 5 / 6, driving a
+        // car / riding a motorbike (the "drive" capability).
+        Value::Number(n) => n.as_f64().is_some_and(|f| [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0].contains(&f)),
         _ => false,
     }
 }
@@ -543,7 +544,8 @@ mod tests {
         p.enter("u", json!({"handle": "u"}), 0.0);
         for (a, keep) in [(json!(0), true), (json!(1), true), (json!(2), true),
                           (json!(2.0), true), (json!(true), true), (json!(false), true),
-                          (json!(3), true), (json!(4), true), (json!(5), false), (json!(-1), false), (json!(1.5), false),
+                          (json!(3), true), (json!(4), true), (json!(5), true), (json!(6), true), (json!(7), false),
+                          (json!(-1), false), (json!(1.5), false),
                           (json!("1"), false), (json!([1]), false)] {
             let m = json!({"w": "base", "x": 0, "z": 0, "r": 0, "a": a});
             assert_eq!(p.pos("u", &m, 1.0), keep, "a = {a}");

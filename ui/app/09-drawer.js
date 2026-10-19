@@ -716,6 +716,8 @@ function render(){
   // Stamp each live creature with its sessionId so branch/mega choice lookups (evoChoice,
   // branchFinalDex, pokeMegaForm) resolve. Object.assign clones carry _sid forward.
   (STATE.sessions||[]).forEach(function(s){ if(s.creature) s.creature._sid = s.sessionId || s.id; });
+  // Picks made in another browser (or before this one) come back from the server: they win.
+  if(typeof evoSeedFromServer==="function") evoSeedFromServer(STATE.sessions);
   // The Valley pauses its game when a tab starts needing you, even while hidden.
   if(typeof HQV!=="undefined" && HQV.onState){ try{ HQV.onState(STATE); }catch(e){} }
   if(typeof valleyPillSync==="function") valleyPillSync();

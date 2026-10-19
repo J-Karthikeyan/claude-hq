@@ -23,16 +23,23 @@ PROTOCOL = 1
 WAIT_SECS = 115          # Claude Code gives the hook 120 s (see the installer); stay under it
 FIRE_SECS = 0.3
 STR_MAX = 2000           # cap each string sent for a permission card
+PLAN_MAX = 12000         # ...except a plan waiting for approval (ExitPlanMode), which is read in full
+DIFF_MAX = 4000          # each side of an edit sent for the notch's diff view
+DIFF_EDITS = 8           # at most this many edits of a MultiEdit
 EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
 # Environment the app uses to find (and focus) the session's terminal window.
 ENV_KEYS = ("TERM_PROGRAM", "KITTY_WINDOW_ID", "KITTY_LISTEN_ON", "ITERM_SESSION_ID",
             "TERM_SESSION_ID", "TMUX", "TMUX_PANE", "__CFBundleIdentifier")
 
 
+def _clip(v, limit):
+    return v if len(v) <= limit else v[: limit - 1] + "…"
+
+
 def _cap(v, depth=0):
     """Shrink a tool_input for display: long strings trimmed, deep structures cut."""
     if isinstance(v, str):
-        return v if len(v) <= STR_MAX else v[: STR_MAX - 1] + "…"
+        return _clip(v, STR_MAX)
     if depth > 4:
         return None
     if isinstance(v, list):
@@ -65,6 +72,30 @@ def edit_counts(tool, ti):
     if tool == "NotebookEdit":
         return _lines(ti.get("new_source")), 0
     return None
+
+
+def edit_diff(tool, ti):
+    """The change an edit tool made, for the notch's diff view: {"edits": [{"old", "new"}],
+    "truncated"}. Each side capped at DIFF_MAX, at most DIFF_EDITS edits. None for other tools.
+    Like everything here it goes only to the local socket."""
+    ti = ti if isinstance(ti, dict) else {}
+
+    def text(v):
+        return v if isinstance(v, str) else ""
+    if tool == "Edit":
+        pairs = [(text(ti.get("old_string")), text(ti.get("new_string")))]
+    elif tool == "MultiEdit":
+        pairs = [(text(e.get("old_string")), text(e.get("new_string")))
+                 for e in (ti.get("edits") or []) if isinstance(e, dict)]
+    elif tool == "Write":
+        pairs = [("", text(ti.get("content")))]
+    elif tool == "NotebookEdit":
+        pairs = [("", text(ti.get("new_source")))]
+    else:
+        return None
+    cut = len(pairs) > DIFF_EDITS or any(len(o) > DIFF_MAX or len(n) > DIFF_MAX for o, n in pairs)
+    return {"edits": [{"old": _clip(o, DIFF_MAX), "new": _clip(n, DIFF_MAX)} for o, n in pairs[:DIFF_EDITS]],
+            "truncated": cut}
 
 
 def tool_summary(tool, ti):
@@ -106,6 +137,9 @@ def build_message(payload, argv):
         counts = edit_counts(tool, ti)
         if counts:
             msg["plus"], msg["minus"] = counts
+        diff = edit_diff(tool, ti)
+        if diff:
+            msg["diff"] = diff
     if event == "PostToolUseFailure":
         msg["error"] = _cap(str(payload.get("error") or ""))[:300]
     if event == "UserPromptSubmit":
@@ -119,6 +153,8 @@ def build_message(payload, argv):
         msg["source"] = str(payload.get("source") or "")
     if event == "PermissionRequest" or is_ask(payload, argv):
         msg["toolInput"] = _cap(ti if isinstance(ti, (dict, list)) else {})
+        if tool == "ExitPlanMode" and isinstance(ti, dict) and isinstance(ti.get("plan"), str):
+            msg["toolInput"]["plan"] = _clip(ti["plan"], PLAN_MAX)   # the plan card shows all of it
         sugg = payload.get("permission_suggestions")
         msg["canAlways"] = bool(event == "PermissionRequest" and isinstance(sugg, list) and sugg)
         msg["question"] = tool == "AskUserQuestion"

@@ -9,8 +9,15 @@ calls with `+N −M` line counts for edits.
 When Claude asks for permission, the notch opens on its own. Answer from there:
 **Allow**, **Always** (adds the rule Claude Code suggests), **Deny**, or **Terminal** to answer
 in the CLI as usual. `AskUserQuestion` prompts show their choices (single or multi-select)
-and you can answer them right in the notch. Click a session card to jump to its terminal
-window (kitty, Terminal, iTerm2, tmux).
+and you can answer them right in the notch. A plan waiting for approval (plan mode's
+`ExitPlanMode`) shows as a **plan card**: read the whole plan, then **Approve**, **Keep
+planning** (Claude stays in plan mode) or **Terminal**. Click a session card to jump to its
+terminal window (kitty, Terminal, iTerm2, tmux); click an edit in its ticker (the `›` rows) to
+see what changed: removed lines in red, added in green, a couple of unchanged lines around them.
+
+Away from the Mac? Turn on **Phone alerts** in Settings and subscribe to your topic in the
+[ntfy](https://ntfy.sh) app: you get a push when a session needs you, finishes or fails (see
+Privacy below for exactly what is sent).
 
 macOS 14+, Apple silicon or Intel. Builds with the Xcode Command Line Tools alone.
 
@@ -58,23 +65,44 @@ Claude Code ──hooks──▶ hq_notch_hook.py ──Unix socket──▶ HQ 
   every peer's uid. The only network requests are the sprite hotlinks HQ already uses
   (jsDelivr's mirror of PokeAPI, and PkParaíso for the 3D pack; the URL carries only a Dex
   number or a species slug) and HQ on
-  `127.0.0.1`. Prompts, commands and file paths never leave the machine.
+  `127.0.0.1`. Prompts, commands and file paths never leave the machine. (Edit diffs and plans
+  travel the same local socket, capped: 4 000 characters per side of an edit, 8 edits, 12 000
+  for a plan.)
+- **Phone alerts (opt-in, off by default).** When on, the app POSTs to `<server>/<topic>`
+  (default server `https://ntfy.sh`; any `http(s)` ntfy server you run works, and the URL
+  may not carry credentials, a query or a fragment). The body and the `Title` / `Tags` /
+  `Priority` headers are fixed strings, one of: "A Claude session needs you", "A Claude
+  session finished", "A Claude session had an error" (plus "Test from HQ Notch" when you press
+  *Send a test*). No prompt, title, folder, command, file path, session id or count goes in.
+  At most one push of each kind per 30 s; with *Only when I'm away from the Mac*, none while
+  you used the keyboard or mouse in the last 2 minutes. The topic is `hq-` and 20 random
+  letters (100 bits from `SecRandomCopyBytes`), made once per Mac; anyone who knows it can read
+  the alerts, so keep it to yourself, or press *New* for another. The ntfy server sees your IP
+  address and when you get alerts.
 - **Same Pokémon as HQ.** `Creature.swift` ports `creature_for()` / `shiny_for_species()`
   from `dashboard.py` and `pokeDexFor()` from `ui/app/06-trainer-packs.js`. The evolution
   lines are generated from the JS (`tools/gen_pokedata.py`). Like HQ's cards, a species never
   shows an earlier form than the highest stage you've reached with it: the notch reads each
   species' `maxStage` from HQ's `/api/pokedex` (at most once a minute, remembered while HQ is
-  down). Not mirrored: manual branch picks (Eevee etc.), which live only in the browser.
+  down). A branch or Mega you picked in HQ (Eevee's form, Charizard X or Y) comes back from
+  `/api/sessions` as `creature.evo` and wins over the hashed default.
 - **2D or 3D, your pick.** Settings → Sprites: **2D** (animated Gen 5; Apex = the line's final
   form), **3D** (HQ's `pokemon3d` pack, with the Mega form at Apex when the species has one,
   same default X/Y pick as HQ), or **Match HQ** (follows HQ's own `creaturePack`).
 - **Sprites are hotlinked, never bundled.** They are downloaded on first use and cached in
   `~/Library/Caches/HQNotch`. If the CDN is blocked, an original drawn blob takes their place.
 
+**Sharing the notch.** Other notch apps (Sapphire, NotchNook, Boring Notch, Alcove, Coucou, ...) draw
+there too and open on hover, so two of them overlap. Settings → Position: **Auto** (the default) sits in
+the notch, and steps just left of it while one of those apps is running (and back when it quits);
+or pin it **In the notch**, **Left of it** or **Right of it**. Beside the notch the pill is a compact
+capsule and the panel opens below it.
+
 Settings: the gear in the notch's header. Sprites (2D / 3D / Match HQ, with a live preview of
 your sessions), sounds, show idle sessions, approve from the notch (off = every request goes
-straight to the terminal), quit. A permission prompt always closes settings so it is never
-hidden. The menu bar icon (hexagon) has the same toggles.
+straight to the terminal), phone alerts (server, topic with Copy / New, away-only, Send a
+test), quit. A permission prompt always closes settings (and a diff) so it is never hidden.
+The menu bar icon (hexagon) has the sounds / idle / approvals toggles.
 
 ## Develop
 
